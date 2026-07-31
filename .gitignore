@@ -1,0 +1,15 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+appsettings.Development.json
+
+# Angular
+birds-atlas-ui/node_modules/
+birds-atlas-ui/dist/
+birds-atlas-ui/.angular/
+
+# General
+.DS_Store
+*.log
