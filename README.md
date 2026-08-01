@@ -1,47 +1,67 @@
 # 🐦 Birds Atlas
 
-A full-stack bird encyclopedia app powered by open-source biodiversity data.
+Full-stack bird encyclopedia — **zero local database**.
+All data is fetched **live on-the-fly** from open biodiversity APIs.
 
-## Tech Stack
+## Architecture
 
-| Layer | Technology |
-|---|---|
-| Frontend | Angular 17 + Bootstrap 5 |
-| Backend | .NET 8 Web API (C#) |
-| Database | SQL Server + Entity Framework Core 8 |
-| Sync | Hangfire background jobs |
-| Data Sources | GBIF API, iNaturalist API, Xeno-canto API |
+```
+Angular 17 UI
+      ↓ HTTP
+.NET 8 Web API  (BirdAggregatorService)
+      ├─ GbifService      → GBIF Species API  (species list, taxonomy, continent occurrence)
+      ├─ InatService      → iNaturalist API   (photos, common names, Wikipedia descriptions)
+      └─ XenoCantoService → Xeno-canto API     (bird sound recordings)
 
-## Features
-
-- 🌍 Filter by continent (Europe, Africa, Asia, Americas, Oceania)
-- 🔬 Filter by taxonomy (Order → Family → Genus)
-- 🎨 Filter by physical traits (beak color, breast color, size, habitat)
-- 🖼️ Bird photos from iNaturalist
-- 🔊 Bird sounds from Xeno-canto
-- 🔄 Daily background sync from GBIF + iNaturalist
-
-## Getting Started
-
-### Backend
-```bash
-cd BirdsAtlas.API
-dotnet restore
-# Set connection string in appsettings.json
-dotnet ef database update
-dotnet run
+Cache: IMemoryCache (30–60 min TTL — no persistence, server-reboot safe)
 ```
 
-### Frontend
-```bash
-cd birds-atlas-ui
-npm install
-ng serve
-```
+> No database. No migrations. No sync jobs.  
+> `dotnet run` → app works immediately.
+
+## Endpoints
+
+| Method | URL | Description |
+|---|---|---|
+| GET | `/api/birds` | Search/filter birds live |
+| GET | `/api/birds/{gbifKey}` | Full detail (GBIF + iNat + Xeno-canto) |
+| GET | `/api/birds/filters` | Continents + orders for dropdowns |
+| GET | `/api/taxonomy/orders` | All bird orders |
+
+## Filters
+
+| Parameter | Example | Source |
+|---|---|---|
+| `search` | `robin` | GBIF species search |
+| `continent` | `EUROPE` | GBIF occurrence check |
+| `order` | `Passeriformes` | GBIF taxonomy |
+| `family` | `Turdidae` | GBIF taxonomy |
+| `genus` | `Turdus` | GBIF taxonomy |
 
 ## Data Sources
 
-- [GBIF](https://www.gbif.org/) — taxonomy, species lists, continent distribution
-- [iNaturalist](https://www.inaturalist.org/) — photos, observation data
-- [Xeno-canto](https://xeno-canto.org/) — bird sound recordings
-- [eBird](https://ebird.org/) — regional observation hotspots
+| API | Used for | Auth |
+|---|---|---|
+| [GBIF](https://www.gbif.org/) | Species list, taxonomy, continent distribution | None |
+| [iNaturalist](https://www.inaturalist.org/) | Photos, common names, descriptions | None |
+| [Xeno-canto](https://xeno-canto.org/) | Bird sound recordings | None |
+
+## Getting Started
+
+```bash
+# Backend
+cd BirdsAtlas.API
+dotnet restore
+dotnet run
+# Swagger UI: http://localhost:5000/swagger
+
+# Frontend
+cd birds-atlas-ui
+npm install
+ng serve
+# App: http://localhost:4200
+```
+
+## Branch
+
+All code lives on the `public` branch.

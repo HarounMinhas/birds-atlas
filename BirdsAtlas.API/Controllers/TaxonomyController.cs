@@ -7,25 +7,10 @@ namespace BirdsAtlas.API.Controllers;
 [Route("api/[controller]")]
 public class TaxonomyController : ControllerBase
 {
-    private readonly BirdQueryService _queryService;
+    private readonly GbifService _gbif;
+    public TaxonomyController(GbifService gbif) => _gbif = gbif;
 
-    public TaxonomyController(BirdQueryService queryService)
-    {
-        _queryService = queryService;
-    }
-
-    // GET /api/taxonomy/orders
+    /// <summary>All bird orders from GBIF (cached 6h).</summary>
     [HttpGet("orders")]
-    public async Task<IActionResult> GetOrders() =>
-        Ok(await _queryService.GetOrdersAsync());
-
-    // GET /api/taxonomy/families?order=Passeriformes
-    [HttpGet("families")]
-    public async Task<IActionResult> GetFamilies([FromQuery] string? order) =>
-        Ok(await _queryService.GetFamiliesAsync(order));
-
-    // GET /api/taxonomy/genera?family=Turdidae
-    [HttpGet("genera")]
-    public async Task<IActionResult> GetGenera([FromQuery] string? family) =>
-        Ok(await _queryService.GetGeneraAsync(family));
+    public async Task<IActionResult> GetOrders() => Ok(await _gbif.GetOrdersAsync());
 }

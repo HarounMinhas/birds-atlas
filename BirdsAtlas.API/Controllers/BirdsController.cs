@@ -8,44 +8,26 @@ namespace BirdsAtlas.API.Controllers;
 [Route("api/[controller]")]
 public class BirdsController : ControllerBase
 {
-    private readonly BirdQueryService _queryService;
-    private readonly GbifSyncService _syncService;
+    private readonly BirdAggregatorService _agg;
+    public BirdsController(BirdAggregatorService agg) => _agg = agg;
 
-    public BirdsController(BirdQueryService queryService, GbifSyncService syncService)
-    {
-        _queryService = queryService;
-        _syncService = syncService;
-    }
-
-    // GET /api/birds?continent=EUROPE&order=Passeriformes&beakColor=red&page=1
+    /// <summary>Search birds live. All data comes from GBIF + iNaturalist.</summary>
+    /// <remarks>GET /api/birds?search=robin&amp;continent=EUROPE&amp;order=Passeriformes&amp;limit=24&amp;offset=0</remarks>
     [HttpGet]
-    public async Task<ActionResult<PagedResult<BirdListItemDto>>> GetBirds([FromQuery] BirdFilterRequest filter)
+    public async Task<ActionResult<PagedResult<BirdSummaryDto>>> Search([FromQuery] BirdSearchRequest req)
+        => Ok(await _agg.SearchAsync(req));
+
+    /// <summary>Full bird detail — aggregates GBIF + iNaturalist + Xeno-canto in parallel.</summary>
+    /// <remarks>GET /api/birds/5231190</remarks>
+    [HttpGet("{gbifKey:int}")]
+    public async Task<ActionResult<BirdDetailDto>> GetDetail(int gbifKey)
     {
-        var result = await _queryService.GetBirdsAsync(filter);
-        return Ok(result);
+        var detail = await _agg.GetDetailAsync(gbifKey);
+        return detail is null ? NotFound() : Ok(detail);
     }
 
-    // GET /api/birds/5
-    [HttpGet("{id:int}")]
-    public async Task<ActionResult<BirdDto>> GetBird(int id)
-    {
-        var bird = await _queryService.GetBirdDetailAsync(id);
-        return bird is null ? NotFound() : Ok(bird);
-    }
-
-    // GET /api/birds/filters — returns all available filter options
+    /// <summary>Returns continent list + bird orders for filter dropdowns.</summary>
     [HttpGet("filters")]
-    public async Task<ActionResult<BirdFilterOptions>> GetFilterOptions()
-    {
-        var options = await _queryService.GetFilterOptionsAsync();
-        return Ok(options);
-    }
-
-    // POST /api/birds/sync — manual trigger (admin/dev)
-    [HttpPost("sync")]
-    public async Task<IActionResult> TriggerSync()
-    {
-        await _syncService.SyncAllBirdsAsync();
-        return Accepted(new { message = "Sync started in background" });
-    }
+    public async Task<ActionResult<FilterMetaDto>> GetFilters()
+        => Ok(await _agg.GetFilterMetaAsync());
 }

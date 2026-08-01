@@ -1,59 +1,50 @@
-export interface BirdListItem {
-  id: number;
-  commonNameEn: string;
+export interface BirdSummary {
+  gbifKey: number;
+  commonName: string;
   scientificName: string;
   order: string;
   family: string;
   conservationStatus: string | null;
-  primaryImageUrl: string | null;
+  thumbnailUrl: string | null;
   continents: string[];
 }
 
-export interface BirdDetail extends BirdListItem {
-  commonNameNl: string;
+export interface BirdDetail {
+  gbifKey: number;
+  inatTaxonId: number | null;
+  commonName: string;
+  scientificName: string;
+  order: string;
+  family: string;
   genus: string;
-  habitatType: string | null;
-  characteristics: Characteristic[];
-}
-
-export interface Characteristic {
-  key: string;
-  value: string;
-}
-
-export interface BirdFilterOptions {
+  conservationStatus: string | null;
+  description: string | null;
+  wikipediaUrl: string | null;
+  imageUrl: string | null;
+  thumbnailUrl: string | null;
   continents: string[];
-  orders: string[];
-  families: string[];
-  beakColors: string[];
-  breastColors: string[];
-  sizeCategories: string[];
-  habitatTypes: string[];
-  conservationStatuses: string[];
+  characteristics: Characteristic[];
+  sounds: MediaItem[];
 }
+
+export interface Characteristic { key: string; label: string; value: string; }
+export interface MediaItem { url: string; source: string; attribution: string | null; license: string | null; }
 
 export interface PagedResult<T> {
   items: T[];
+  offset: number;
+  limit: number;
   total: number;
-  page: number;
-  pageSize: number;
-  totalPages: number;
-  hasNextPage: boolean;
-  hasPreviousPage: boolean;
 }
 
-export interface BirdFilterRequest {
+export interface FilterMeta { continents: string[]; orders: string[]; }
+
+export interface BirdSearchRequest {
   continent?: string;
   order?: string;
   family?: string;
   genus?: string;
-  beakColor?: string;
-  breastColor?: string;
-  backColor?: string;
-  sizeCategory?: string;
-  habitatType?: string;
-  conservationStatus?: string;
   search?: string;
-  page?: number;
-  pageSize?: number;
+  offset?: number;
+  limit?: number;
 }

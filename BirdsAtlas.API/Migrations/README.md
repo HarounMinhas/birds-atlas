@@ -1,11 +1,10 @@
 # Migrations
 
-Run the following commands to create and apply the initial database migration:
+No migrations needed — this app has **no local database**.
 
-```bash
-cd BirdsAtlas.API
-dotnet ef migrations add InitialCreate
-dotnet ef database update
-```
+All bird data is fetched live from:
+- GBIF API (`https://api.gbif.org/v1/`)
+- iNaturalist API (`https://api.inaturalist.org/v1/`)
+- Xeno-canto API (`https://xeno-canto.org/api/2/`)
 
-Make sure `appsettings.json` has the correct `DefaultConnection` string before running.
+Results are cached in `IMemoryCache` for 30–60 minutes to stay responsive without hammering external APIs.

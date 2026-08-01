@@ -2,38 +2,26 @@ import { Injectable, inject } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { BirdDetail, BirdFilterOptions, BirdFilterRequest, BirdListItem, PagedResult } from '../models/bird.model';
+import { BirdDetail, BirdSearchRequest, BirdSummary, FilterMeta, PagedResult } from '../models/bird.model';
 
 @Injectable({ providedIn: 'root' })
 export class BirdService {
   private http = inject(HttpClient);
-  private base = environment.apiUrl;
+  private base = `${environment.apiUrl}/birds`;
 
-  getBirds(filter: BirdFilterRequest): Observable<PagedResult<BirdListItem>> {
+  search(req: BirdSearchRequest): Observable<PagedResult<BirdSummary>> {
     let params = new HttpParams();
-    Object.entries(filter).forEach(([key, val]) => {
-      if (val !== undefined && val !== null && val !== '') {
-        params = params.set(key, String(val));
-      }
+    Object.entries(req).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '') params = params.set(k, String(v));
     });
-    return this.http.get<PagedResult<BirdListItem>>(`${this.base}/birds`, { params });
+    return this.http.get<PagedResult<BirdSummary>>(this.base, { params });
   }
 
-  getBird(id: number): Observable<BirdDetail> {
-    return this.http.get<BirdDetail>(`${this.base}/birds/${id}`);
+  getDetail(gbifKey: number): Observable<BirdDetail> {
+    return this.http.get<BirdDetail>(`${this.base}/${gbifKey}`);
   }
 
-  getFilterOptions(): Observable<BirdFilterOptions> {
-    return this.http.get<BirdFilterOptions>(`${this.base}/birds/filters`);
-  }
-
-  getOrders(): Observable<string[]> {
-    return this.http.get<string[]>(`${this.base}/taxonomy/orders`);
-  }
-
-  getFamilies(order?: string): Observable<string[]> {
-    let params = new HttpParams();
-    if (order) params = params.set('order', order);
-    return this.http.get<string[]>(`${this.base}/taxonomy/families`, { params });
+  getFilters(): Observable<FilterMeta> {
+    return this.http.get<FilterMeta>(`${this.base}/filters`);
   }
 }

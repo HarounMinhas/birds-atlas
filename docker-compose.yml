@@ -1,13 +1,12 @@
 version: '3.8'
+# No database service needed — app is fully stateless
 services:
   api:
     build: ./BirdsAtlas.API
     ports:
       - "5000:8080"
     environment:
-      - ConnectionStrings__DefaultConnection=Server=db;Database=BirdsAtlasDb;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True
-    depends_on:
-      - db
+      - ASPNETCORE_ENVIRONMENT=Development
 
   frontend:
     build: ./birds-atlas-ui
@@ -15,16 +14,3 @@ services:
       - "4200:80"
     depends_on:
       - api
-
-  db:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    environment:
-      - ACCEPT_EULA=Y
-      - SA_PASSWORD=YourStrong!Passw0rd
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqldata:/var/lib/mssql
-
-volumes:
-  sqldata:
