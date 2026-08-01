@@ -238,8 +238,7 @@ public sealed class BirdSearchService
         }
 
         var ordered = all
-            .OrderBy(taxon => taxon.CommonName.Length == 0 ? taxon.ScientificName : taxon.CommonName,
-                StringComparer.CurrentCultureIgnoreCase)
+            .OrderBy(DisplayName, StringComparer.CurrentCultureIgnoreCase)
             .ThenBy(taxon => taxon.ScientificName, StringComparer.OrdinalIgnoreCase)
             .ToList();
         _cache.Set(key, ordered, TimeSpan.FromMinutes(30));
@@ -332,20 +331,32 @@ public sealed class BirdSearchService
         var key = $"bird-gbif:{scientificName.ToLowerInvariant()}";
         if (_cache.TryGetValue<GbifTaxon>(key, out var cached)) return cached;
 
-        var client = _clients.CreateClient("gbif");
-        using var response = await client.GetAsync(
-            $"v1/species/match?name={Uri.EscapeDataString(scientificName)}&strict=false",
-            cancellationToken);
-        if (!response.IsSuccessStatusCode) return new GbifTaxon(null, string.Empty, string.Empty, string.Empty);
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var result = new GbifTaxon(
-            GetLong(document.RootElement, "usageKey"),
-            GetString(document.RootElement, "family"),
-            GetString(document.RootElement, "order"),
-            GetString(document.RootElement, "genus"));
-        _cache.Set(key, result, TimeSpan.FromDays(3));
-        return result;
+        try
+        {
+            var client = _clients.CreateClient("gbif");
+            using var response = await client.GetAsync(
+                $"v1/species/match?name={Uri.EscapeDataString(scientificName)}&strict=false",
+                cancellationToken);
+            if (!response.IsSuccessStatusCode) return EmptyGbifTaxon();
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            var result = new GbifTaxon(
+                GetLong(document.RootElement, "usageKey"),
+                GetString(document.RootElement, "family"),
+                GetString(document.RootElement, "order"),
+                GetString(document.RootElement, "genus"));
+            _cache.Set(key, result, TimeSpan.FromDays(3));
+            return result;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return EmptyGbifTaxon();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            return EmptyGbifTaxon();
+        }
     }
 
     private async Task<bool> HasOccurrenceAsync(
@@ -414,6 +425,16 @@ public sealed class BirdSearchService
             status,
             GetLong(element, "observations_count") ?? 0);
     }
+
+    private static string DisplayName(SearchTaxon taxon)
+    {
+        if (taxon.CommonName.Length > 0) return taxon.CommonName;
+        if (taxon.EnglishName.Length > 0) return taxon.EnglishName;
+        return taxon.ScientificName;
+    }
+
+    private static GbifTaxon EmptyGbifTaxon() =>
+        new(null, string.Empty, string.Empty, string.Empty);
 
     private static string LocalizedName(JsonElement element, string locale, string lexicon)
     {
