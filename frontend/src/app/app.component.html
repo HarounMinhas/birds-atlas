@@ -108,18 +108,18 @@
           <button type="button" (click)="clearFilters()">Wis taxonomiefilters</button>
         </div>
 
-        <div class="loading-grid" *ngIf="loading">
+        <div class="loading-grid" *ngIf="activeView === 'discover' && loading">
           <div class="skeleton-card" *ngFor="let placeholder of [1,2,3,4,5,6,7,8]"><span></span><i></i><i></i></div>
         </div>
 
-        <div class="state-card error-state" *ngIf="!loading && error">
+        <div class="state-card error-state" *ngIf="activeView === 'discover' && !loading && error">
           <svg viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2Zm-1 6h2v7h-2V8Zm0 9h2v2h-2v-2Z"/></svg>
           <h2>Dat ging niet goed</h2>
           <p>{{ error }}</p>
           <button type="button" class="primary-button" (click)="retry()">Probeer opnieuw</button>
         </div>
 
-        <div class="state-card" *ngIf="!loading && !error && visibleBirds.length === 0">
+        <div class="state-card" *ngIf="(activeView !== 'discover' || (!loading && !error)) && visibleBirds.length === 0">
           <svg viewBox="0 0 48 48"><path d="M35.5 5.5C21 9.2 12.3 19.7 10.5 39c6.3-11.3 13.8-18 24-20.8-6.8 5-11.7 11.2-15 19.3 9.7-6.5 16.8-16.2 16-32Z"/></svg>
           <h2>Nog geen vogels hier</h2>
           <p *ngIf="activeView === 'favorites'">Voeg soorten toe met het hartje op een vogelkaart.</p>
@@ -128,7 +128,7 @@
           <button *ngIf="activeView !== 'discover'" type="button" class="primary-button" (click)="setView('discover')">Ontdek soorten</button>
         </div>
 
-        <div class="bird-grid" *ngIf="!loading && !error && visibleBirds.length">
+        <div class="bird-grid" *ngIf="(activeView !== 'discover' || (!loading && !error)) && visibleBirds.length">
           <article
             class="bird-card"
             *ngFor="let bird of visibleBirds; trackBy: trackBird"
@@ -169,7 +169,7 @@
           </article>
         </div>
 
-        <nav class="pagination" *ngIf="activeView === 'discover' && !loading && totalPages > 1" aria-label="Paginering">
+        <nav class="pagination" *ngIf="activeView === 'discover' && !loading && !error && totalPages > 1" aria-label="Paginering">
           <button type="button" [disabled]="page === 1" (click)="changePage(page - 1)">Vorige</button>
           <span>Pagina {{ page }} van {{ totalPages }}</span>
           <button type="button" [disabled]="page === totalPages" (click)="changePage(page + 1)">Volgende</button>
