@@ -2,7 +2,7 @@ import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import * as L from 'leaflet';
-import { Subscription, finalize } from 'rxjs';
+import { Subscription, catchError, finalize, forkJoin, of } from 'rxjs';
 import { ApiService } from './api.service';
 import {
   BirdDetail,
@@ -19,6 +19,11 @@ interface NavItem {
   label: string;
 }
 
+interface MapSelection {
+  birds: BirdSummary[];
+  unresolvedIds: number[];
+}
+
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -29,6 +34,8 @@ interface NavItem {
 export class AppComponent implements OnInit, OnDestroy {
   private readonly api = inject(ApiService);
   private readonly subscriptions = new Subscription();
+  private birdListSubscription?: Subscription;
+  private birdListRequestToken = 0;
   private searchTimer?: ReturnType<typeof setTimeout>;
   private map?: L.Map;
   private readonly mapLayer = L.layerGroup();
@@ -69,6 +76,7 @@ export class AppComponent implements OnInit, OnDestroy {
   favorites: StoredBird[] = [];
   seen: StoredBird[] = [];
   comparisonIds: number[] = [];
+  comparisonBirds: StoredBird[] = [];
   taxonomy: TaxonomyOptions = { orders: [], families: [], genera: [] };
 
   query = '';
@@ -239,13 +247,15 @@ export class AppComponent implements OnInit, OnDestroy {
     const index = this.comparisonIds.indexOf(bird.id);
     if (index >= 0) {
       this.comparisonIds.splice(index, 1);
+      this.comparisonBirds = this.comparisonBirds.filter((item) => item.id !== bird.id);
     } else if (this.comparisonIds.length < 4) {
       this.comparisonIds.push(bird.id);
+      this.upsertComparisonBird(bird);
     } else {
       this.showToast('Je kunt maximaal vier soorten vergelijken');
       return;
     }
-    localStorage.setItem('birdatlas:comparison', JSON.stringify(this.comparisonIds));
+    this.persistComparisonState();
     if (this.activeView === 'map') this.renderMap();
   }
 
@@ -257,7 +267,8 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!this.comparisonIds.includes(bird.id)) {
       this.comparisonIds = [bird.id, ...this.comparisonIds].slice(0, 4);
     }
-    localStorage.setItem('birdatlas:comparison', JSON.stringify(this.comparisonIds));
+    this.upsertComparisonBird(bird);
+    this.persistComparisonState();
     this.closeDetail();
     this.setView('map');
   }
@@ -285,33 +296,41 @@ export class AppComponent implements OnInit, OnDestroy {
 
   loadBirds(resetPage: boolean): void {
     if (resetPage) this.page = 1;
+
+    const token = ++this.birdListRequestToken;
+    this.birdListSubscription?.unsubscribe();
     this.loading = true;
     this.error = '';
 
-    this.subscriptions.add(
-      this.api.getBirds({
-        q: this.query,
-        page: this.page,
-        pageSize: this.pageSize,
-        continent: this.continent,
-        order: this.order,
-        family: this.family,
-        genus: this.genus,
-        sort: this.sort
-      })
-      .pipe(finalize(() => this.loading = false))
-      .subscribe({
-        next: (response) => {
-          this.birds = response.items;
-          this.total = response.total;
-          this.totalIsEstimate = response.isEstimate;
-        },
-        error: () => {
-          this.birds = [];
-          this.error = 'Birds Atlas kan de databronnen nu niet bereiken. Controleer of de API draait.';
-        }
-      })
-    );
+    const request = this.api.getBirds({
+      q: this.query,
+      page: this.page,
+      pageSize: this.pageSize,
+      continent: this.continent,
+      order: this.order,
+      family: this.family,
+      genus: this.genus,
+      sort: this.sort
+    })
+    .pipe(finalize(() => {
+      if (token === this.birdListRequestToken) this.loading = false;
+    }))
+    .subscribe({
+      next: (response) => {
+        if (token !== this.birdListRequestToken) return;
+        this.birds = response.items;
+        this.total = response.total;
+        this.totalIsEstimate = response.isEstimate;
+      },
+      error: () => {
+        if (token !== this.birdListRequestToken) return;
+        this.birds = [];
+        this.error = 'Birds Atlas kan de databronnen nu niet bereiken. Controleer of de API draait.';
+      }
+    });
+
+    this.birdListSubscription = request;
+    this.subscriptions.add(request);
   }
 
   private loadTaxonomy(): void {
@@ -340,46 +359,102 @@ export class AppComponent implements OnInit, OnDestroy {
       this.map.invalidateSize();
     }
 
+    const token = ++this.mapRequestToken;
     this.mapLayer.clearLayers();
     this.mapError = '';
     this.mapSpeciesNames = [];
 
-    const selectedBirds = this.resolveMapBirds();
-    if (!selectedBirds.length) {
+    if (!this.comparisonIds.length) {
       this.mapLoading = false;
       this.mapError = 'Selecteer een of meer soorten via de vergelijkknop op een vogelkaart.';
       return;
     }
 
-    const token = ++this.mapRequestToken;
     this.mapLoading = true;
+    const selection = this.resolveMapBirds();
+    if (!selection.unresolvedIds.length) {
+      this.loadOccurrenceLayers(selection.birds, token);
+      return;
+    }
+
+    const detailRequests = selection.unresolvedIds.map((id) =>
+      this.api.getBird(id).pipe(catchError(() => of(null)))
+    );
+
+    this.subscriptions.add(
+      forkJoin(detailRequests).subscribe({
+        next: (details) => {
+          if (token !== this.mapRequestToken) return;
+          for (const detail of details) {
+            if (detail) this.upsertComparisonBird(detail);
+          }
+          this.persistComparisonState();
+
+          const refreshed = this.resolveMapBirds();
+          if (!refreshed.birds.length) {
+            this.mapLoading = false;
+            this.mapError = 'De geselecteerde soorten konden niet opnieuw worden geladen.';
+            return;
+          }
+          this.loadOccurrenceLayers(refreshed.birds, token, refreshed.unresolvedIds.length > 0);
+        },
+        error: () => {
+          if (token !== this.mapRequestToken) return;
+          this.mapLoading = false;
+          this.mapError = 'De geselecteerde soorten konden niet opnieuw worden geladen.';
+        }
+      })
+    );
+  }
+
+  private loadOccurrenceLayers(
+    selectedBirds: BirdSummary[],
+    token: number,
+    hasUnresolvedSpecies = false
+  ): void {
+    if (!selectedBirds.length) {
+      this.mapLoading = false;
+      this.mapError = 'De geselecteerde soorten konden niet opnieuw worden geladen.';
+      return;
+    }
+
     const allCoordinates: L.LatLngExpression[] = [];
     let completed = 0;
+    let hadRequestError = false;
     const palette = ['#1f6a3c', '#c4672c', '#476c9b', '#7b4f8d'];
+    this.mapSpeciesNames = selectedBirds.map((bird) => bird.commonName || bird.scientificName);
+
+    const finishRequest = (): void => {
+      if (token !== this.mapRequestToken) return;
+      completed += 1;
+      if (completed !== selectedBirds.length) return;
+
+      this.mapLoading = false;
+      if (allCoordinates.length && this.map) {
+        this.map.fitBounds(L.latLngBounds(allCoordinates), { padding: [24, 24], maxZoom: 6 });
+        if (hasUnresolvedSpecies || hadRequestError) {
+          this.mapError = 'Niet alle geselecteerde soorten konden op de kaart worden geladen.';
+        }
+      } else if (hadRequestError) {
+        this.mapError = 'De GBIF-punten konden niet worden geladen.';
+      } else {
+        this.mapError = 'Voor deze selectie zijn geen GBIF-punten met coordinaten gevonden.';
+      }
+    };
 
     selectedBirds.forEach((bird, index) => {
-      this.subscriptions.add(
-        this.api.getOccurrences(bird.id, 300).subscribe({
+      const request = this.api.getOccurrences(bird.id, 300)
+        .pipe(finalize(finishRequest))
+        .subscribe({
           next: (points) => {
             if (token !== this.mapRequestToken) return;
-            this.mapSpeciesNames.push(bird.commonName || bird.scientificName);
             this.addOccurrencePoints(points, bird, palette[index], allCoordinates);
           },
-          error: () => undefined,
-          complete: () => {
-            if (token !== this.mapRequestToken) return;
-            completed += 1;
-            if (completed === selectedBirds.length) {
-              this.mapLoading = false;
-              if (allCoordinates.length && this.map) {
-                this.map.fitBounds(L.latLngBounds(allCoordinates), { padding: [24, 24], maxZoom: 6 });
-              } else {
-                this.mapError = 'Voor deze selectie zijn geen GBIF-punten met coordinaten gevonden.';
-              }
-            }
+          error: () => {
+            if (token === this.mapRequestToken) hadRequestError = true;
           }
-        })
-      );
+        });
+      this.subscriptions.add(request);
     });
   }
 
@@ -409,20 +484,25 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
-  private resolveMapBirds(): BirdSummary[] {
-    const allBirds = [...this.birds, ...this.favorites, ...this.seen];
+  private resolveMapBirds(): MapSelection {
+    const allBirds = [...this.birds, ...this.favorites, ...this.seen, ...this.comparisonBirds];
     const unique = new Map(allBirds.map((bird) => [bird.id, bird]));
-    const selected = this.comparisonIds
-      .map((id) => unique.get(id))
-      .filter((bird): bird is BirdSummary => Boolean(bird));
+    const birds: BirdSummary[] = [];
+    const unresolvedIds: number[] = [];
 
-    if (selected.length) return selected;
-    return this.birds.slice(0, 1);
+    for (const id of this.comparisonIds) {
+      const bird = unique.get(id);
+      if (bird) birds.push(bird);
+      else unresolvedIds.push(id);
+    }
+
+    return { birds, unresolvedIds };
   }
 
   private restoreLocalState(): void {
     this.favorites = this.readStoredBirds('birdatlas:favorites');
     this.seen = this.readStoredBirds('birdatlas:seen');
+    this.comparisonBirds = this.readStoredBirds('birdatlas:comparisonBirds');
     this.pagesViewed = Number(localStorage.getItem('birdatlas:pagesViewed') ?? 0);
     try {
       const parsed: unknown = JSON.parse(localStorage.getItem('birdatlas:comparison') ?? '[]');
@@ -432,6 +512,7 @@ export class AppComponent implements OnInit, OnDestroy {
     } catch {
       this.comparisonIds = [];
     }
+    this.comparisonBirds = this.comparisonBirds.filter((bird) => this.comparisonIds.includes(bird.id));
   }
 
   private readStoredBirds(key: string): StoredBird[] {
@@ -445,6 +526,20 @@ export class AppComponent implements OnInit, OnDestroy {
 
   private persistBirds(key: string, birds: StoredBird[]): void {
     localStorage.setItem(key, JSON.stringify(birds));
+  }
+
+  private upsertComparisonBird(bird: BirdSummary | BirdDetail): void {
+    const stored = this.toStoredBird(bird);
+    const index = this.comparisonBirds.findIndex((item) => item.id === bird.id);
+    if (index >= 0) this.comparisonBirds[index] = stored;
+    else this.comparisonBirds.push(stored);
+  }
+
+  private persistComparisonState(): void {
+    const selectedIds = new Set(this.comparisonIds);
+    this.comparisonBirds = this.comparisonBirds.filter((bird) => selectedIds.has(bird.id));
+    localStorage.setItem('birdatlas:comparison', JSON.stringify(this.comparisonIds));
+    this.persistBirds('birdatlas:comparisonBirds', this.comparisonBirds);
   }
 
   private toStoredBird(bird: BirdSummary | BirdDetail): StoredBird {
@@ -476,6 +571,7 @@ export class AppComponent implements OnInit, OnDestroy {
     };
     refresh(this.favorites, 'birdatlas:favorites');
     refresh(this.seen, 'birdatlas:seen');
+    refresh(this.comparisonBirds, 'birdatlas:comparisonBirds');
   }
 
   private showToast(message: string): void {
