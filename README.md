@@ -16,8 +16,8 @@ Responsive full-stack vogelatlas op basis van de aangeleverde desktop-, tablet- 
 
 ## Structuur
 
-- `frontend/` — Angular standalone-app.
-- `backend/BirdsAtlas.Api/` — .NET 8 minimal API die iNaturalist, GBIF, Wikipedia en Xeno-canto combineert.
+- `frontend/` - Angular standalone-app.
+- `backend/BirdsAtlas.Api/` - .NET 8 minimal API die iNaturalist, GBIF, Wikipedia en Xeno-canto combineert.
 
 ## Lokaal starten
 

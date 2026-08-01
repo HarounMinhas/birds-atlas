@@ -1,0 +1,330 @@
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Hoofdnavigatie">
+    <button class="brand" type="button" (click)="setView('discover')" aria-label="Birds Atlas startpagina">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M35.5 5.5C21 9.2 12.3 19.7 10.5 39c6.3-11.3 13.8-18 24-20.8-6.8 5-11.7 11.2-15 19.3 9.7-6.5 16.8-16.2 16-32Z"/></svg>
+      <span>Birds Atlas</span>
+    </button>
+
+    <nav class="side-nav">
+      <button
+        *ngFor="let item of navItems"
+        type="button"
+        class="nav-button"
+        [class.active]="activeView === item.view"
+        (click)="setView(item.view)"
+      >
+        <svg *ngIf="item.icon === 'grid'" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg>
+        <svg *ngIf="item.icon === 'map'" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 5 5-2 8 3 5-2v15l-5 2-8-3-5 2V5Zm5 0v11l8 3V8L8 5Z"/></svg>
+        <svg *ngIf="item.icon === 'heart'" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21S3 15.4 3 8.6C3 5.5 5.3 3 8.2 3c1.7 0 3.1.8 3.8 2 0.7-1.2 2.1-2 3.8-2C18.7 3 21 5.5 21 8.6 21 15.4 12 21 12 21Z"/></svg>
+        <svg *ngIf="item.icon === 'sound'" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h3l4-4v14l-4-4H5V9Zm10.5-1.5a6 6 0 0 1 0 9l-1.4-1.4a4 4 0 0 0 0-6.2l1.4-1.4Zm2.8-2.8a10 10 0 0 1 0 14.6l-1.4-1.4a8 8 0 0 0 0-11.8l1.4-1.4Z"/></svg>
+        <svg *ngIf="item.icon === 'user'" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0H4Z"/></svg>
+        <span>{{ item.label }}</span>
+        <span *ngIf="item.view === 'favorites' && favorites.length" class="nav-count">{{ favorites.length }}</span>
+        <span *ngIf="item.view === 'lifelist' && seen.length" class="nav-count">{{ seen.length }}</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div class="mini-bird" aria-hidden="true">
+        <svg viewBox="0 0 100 80"><path d="M17 55c15-1 21-12 29-25 5-8 15-11 24-7 6 3 10 8 14 14-8-1-13 1-16 5 7 4 13 9 15 16-13-7-25-8-36-4-8 3-17 6-30 1Z"/><circle cx="66" cy="29" r="2"/><path d="m82 34 14 4-14 4Z"/></svg>
+      </div>
+      <p>De wereld van vogels,<br>in jouw hand.</p>
+      <small>Birds Atlas<br>Open biodiversity data</small>
+    </div>
+  </aside>
+
+  <main class="main-area">
+    <header class="topbar">
+      <button class="mobile-brand" type="button" (click)="setView('discover')">
+        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M35.5 5.5C21 9.2 12.3 19.7 10.5 39c6.3-11.3 13.8-18 24-20.8-6.8 5-11.7 11.2-15 19.3 9.7-6.5 16.8-16.2 16-32Z"/></svg>
+        <span>Birds Atlas</span>
+      </button>
+
+      <label class="search-box" [class.mobile-open]="mobileSearchOpen">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m20 20-4.2-4.2a7 7 0 1 0-1.4 1.4L18.6 21 20 20ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z"/></svg>
+        <input
+          type="search"
+          [(ngModel)]="query"
+          (ngModelChange)="onSearchInput()"
+          placeholder="Zoek naar soorten, geslachten, families..."
+          aria-label="Zoek vogels"
+        >
+        <button *ngIf="query" type="button" class="clear-search" (click)="query = ''; loadBirds(true)" aria-label="Zoekopdracht wissen">x</button>
+      </label>
+
+      <div class="top-actions">
+        <button class="icon-action mobile-search-toggle" type="button" (click)="mobileSearchOpen = !mobileSearchOpen" aria-label="Zoeken">
+          <svg viewBox="0 0 24 24"><path d="m20 20-4.2-4.2a7 7 0 1 0-1.4 1.4L18.6 21 20 20ZM5 10.5a5.5 5.5 0 1 1 11 0 5.5 5.5 0 0 1-11 0Z"/></svg>
+        </button>
+        <button class="text-action" type="button" (click)="setView('favorites')">
+          <svg viewBox="0 0 24 24"><path d="M12 21S3 15.4 3 8.6C3 5.5 5.3 3 8.2 3c1.7 0 3.1.8 3.8 2 0.7-1.2 2.1-2 3.8-2C18.7 3 21 5.5 21 8.6 21 15.4 12 21 12 21Z"/></svg>
+          <span>Mijn favorieten</span>
+        </button>
+        <button class="avatar-button" type="button" (click)="setView('profile')" aria-label="Open profiel">
+          <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0H4Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <section class="content">
+      <ng-container *ngIf="activeView !== 'map' && activeView !== 'profile'">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow" *ngIf="activeView !== 'discover'">Persoonlijke collectie</p>
+            <h1>{{ currentTitle }}<span *ngIf="activeView === 'discover' && totalIsEstimate" title="Schatting op basis van de externe bron">*</span></h1>
+          </div>
+          <div class="heading-actions" *ngIf="activeView === 'discover'">
+            <label class="sort-select">
+              <span class="sr-only">Sorteer vogels</span>
+              <select [(ngModel)]="sort" (change)="loadBirds(true)">
+                <option value="observations">Populairste eerst</option>
+                <option value="name">Naam A-Z</option>
+              </select>
+            </label>
+            <button type="button" class="view-button" aria-label="Rasterweergave">
+              <svg viewBox="0 0 24 24"><path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="filter-row" *ngIf="activeView === 'discover'">
+          <button
+            *ngFor="let item of continents"
+            type="button"
+            class="pill"
+            [class.active]="continent === item.code"
+            (click)="selectContinent(item.code)"
+          >{{ item.label }}</button>
+          <button type="button" class="pill filter-trigger" [class.active]="!!(order || family || genus)" (click)="showFilters = true">
+            <svg viewBox="0 0 24 24"><path d="M4 7h10v2H4V7Zm14-2h2v6h-2V5ZM10 15h10v2H10v-2ZM4 13h2v6H4v-6Z"/></svg>
+            Filter
+          </button>
+        </div>
+
+        <div class="active-filters" *ngIf="activeView === 'discover' && (order || family || genus)">
+          <span *ngIf="order">Orde: {{ order }}</span>
+          <span *ngIf="family">Familie: {{ family }}</span>
+          <span *ngIf="genus">Genus: {{ genus }}</span>
+          <button type="button" (click)="clearFilters()">Wis taxonomiefilters</button>
+        </div>
+
+        <div class="loading-grid" *ngIf="loading">
+          <div class="skeleton-card" *ngFor="let placeholder of [1,2,3,4,5,6,7,8]"><span></span><i></i><i></i></div>
+        </div>
+
+        <div class="state-card error-state" *ngIf="!loading && error">
+          <svg viewBox="0 0 24 24"><path d="M12 2 1 21h22L12 2Zm-1 6h2v7h-2V8Zm0 9h2v2h-2v-2Z"/></svg>
+          <h2>Dat ging niet goed</h2>
+          <p>{{ error }}</p>
+          <button type="button" class="primary-button" (click)="retry()">Probeer opnieuw</button>
+        </div>
+
+        <div class="state-card" *ngIf="!loading && !error && visibleBirds.length === 0">
+          <svg viewBox="0 0 48 48"><path d="M35.5 5.5C21 9.2 12.3 19.7 10.5 39c6.3-11.3 13.8-18 24-20.8-6.8 5-11.7 11.2-15 19.3 9.7-6.5 16.8-16.2 16-32Z"/></svg>
+          <h2>Nog geen vogels hier</h2>
+          <p *ngIf="activeView === 'favorites'">Voeg soorten toe met het hartje op een vogelkaart.</p>
+          <p *ngIf="activeView === 'lifelist'">Markeer een soort als gezien om je lifelist op te bouwen.</p>
+          <p *ngIf="activeView === 'discover'">Pas je zoekopdracht of filters aan.</p>
+          <button *ngIf="activeView !== 'discover'" type="button" class="primary-button" (click)="setView('discover')">Ontdek soorten</button>
+        </div>
+
+        <div class="bird-grid" *ngIf="!loading && !error && visibleBirds.length">
+          <article
+            class="bird-card"
+            *ngFor="let bird of visibleBirds; trackBy: trackBird"
+            tabindex="0"
+            (click)="openDetail(bird.id)"
+            (keydown.enter)="openDetail(bird.id)"
+          >
+            <div class="bird-photo">
+              <div class="photo-placeholder">
+                <svg viewBox="0 0 48 48"><path d="M35.5 5.5C21 9.2 12.3 19.7 10.5 39c6.3-11.3 13.8-18 24-20.8-6.8 5-11.7 11.2-15 19.3 9.7-6.5 16.8-16.2 16-32Z"/></svg>
+              </div>
+              <img *ngIf="bird.imageUrl" [src]="bird.imageUrl" [alt]="bird.commonName || bird.scientificName" loading="lazy" (error)="handleImageError($event)">
+              <div class="card-quick-actions">
+                <button type="button" [class.active]="isFavorite(bird.id)" (click)="toggleFavorite(bird, $event)" aria-label="Favoriet wijzigen">
+                  <svg viewBox="0 0 24 24"><path d="M12 21S3 15.4 3 8.6C3 5.5 5.3 3 8.2 3c1.7 0 3.1.8 3.8 2 0.7-1.2 2.1-2 3.8-2C18.7 3 21 5.5 21 8.6 21 15.4 12 21 12 21Z"/></svg>
+                </button>
+                <button type="button" [class.active]="isCompared(bird.id)" (click)="toggleComparison(bird, $event)" aria-label="Vergelijk soort">
+                  <svg viewBox="0 0 24 24"><path d="M7 4h2v14h3v2H5v-2h2V4Zm8 2h2v12h2v2h-6v-2h2V6ZM4 8h8v2H4V8Zm8 4h8v2h-8v-2Z"/></svg>
+                </button>
+              </div>
+            </div>
+            <div class="bird-card-body">
+              <div class="card-title-row">
+                <div>
+                  <h2>{{ bird.commonName || bird.englishName || bird.scientificName }}</h2>
+                  <p class="scientific-name">{{ bird.scientificName }}</p>
+                </div>
+                <span class="status-badge status-{{ bird.iucnStatus.toLowerCase() }}" [title]="statusLabel(bird.iucnStatus)">{{ bird.iucnStatus }}</span>
+              </div>
+              <div class="card-meta">
+                <span>{{ bird.family || 'Familie onbekend' }}</span>
+                <button type="button" [class.seen]="isSeen(bird.id)" (click)="toggleSeen(bird, $event)">
+                  <svg viewBox="0 0 24 24"><path d="m9 16.2-4.2-4.2L3.4 13.4 9 19 21 7l-1.4-1.4L9 16.2Z"/></svg>
+                  {{ isSeen(bird.id) ? 'Gezien' : 'Markeer gezien' }}
+                </button>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <nav class="pagination" *ngIf="activeView === 'discover' && !loading && totalPages > 1" aria-label="Paginering">
+          <button type="button" [disabled]="page === 1" (click)="changePage(page - 1)">Vorige</button>
+          <span>Pagina {{ page }} van {{ totalPages }}</span>
+          <button type="button" [disabled]="page === totalPages" (click)="changePage(page + 1)">Volgende</button>
+        </nav>
+      </ng-container>
+
+      <section class="map-view" *ngIf="activeView === 'map'">
+        <div class="section-heading map-heading">
+          <div>
+            <p class="eyebrow">GBIF occurrence-punten</p>
+            <h1>{{ currentTitle }}</h1>
+            <p>Selecteer tot vier soorten in de lijst en vergelijk hun waarnemingen op een kaart.</p>
+          </div>
+          <button type="button" class="secondary-button" (click)="setView('discover')">Soorten selecteren</button>
+        </div>
+        <div class="map-card">
+          <div id="atlas-map" aria-label="Interactieve verspreidingskaart"></div>
+          <div class="map-overlay loading" *ngIf="mapLoading"><span class="spinner"></span> Punten laden...</div>
+          <div class="map-overlay error" *ngIf="mapError && !mapLoading">{{ mapError }}</div>
+        </div>
+        <div class="map-legend" *ngIf="mapSpeciesNames.length">
+          <span *ngFor="let name of mapSpeciesNames; let index = index" class="legend-item legend-{{ index }}"><i></i>{{ name }}</span>
+        </div>
+        <p class="source-note">De kaart gebruikt actuele GBIF-records met coordinaten. Punten kunnen citizen-science waarnemingen, museumcollecties en andere databronnen bevatten.</p>
+      </section>
+
+      <section class="profile-view" *ngIf="activeView === 'profile'">
+        <div class="profile-hero">
+          <div class="profile-avatar">
+            <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0H4Z"/></svg>
+          </div>
+          <div>
+            <p class="eyebrow">Persoonlijke vogelatlas</p>
+            <h1>Mijn profiel</h1>
+            <p>Je lifelist en favorieten worden lokaal op dit apparaat bewaard.</p>
+          </div>
+        </div>
+        <div class="stats-grid">
+          <article><strong>{{ seen.length }}</strong><span>Soorten gezien</span></article>
+          <article><strong>{{ favorites.length }}</strong><span>Favorieten</span></article>
+          <article><strong>{{ uniqueSeenContinents.length }}</strong><span>Continenten</span></article>
+          <article><strong>{{ pagesViewed }}</strong><span>Detailpagina's bekeken</span></article>
+        </div>
+        <div class="profile-columns">
+          <article class="profile-card">
+            <h2>Mijn voortgang</h2>
+            <div class="progress-row"><span>Families ontdekt</span><strong>{{ uniqueSeenFamilies }}</strong></div>
+            <div class="progress-row"><span>Soorten op de kaart</span><strong>{{ comparisonIds.length }}</strong></div>
+            <button class="primary-button" type="button" (click)="setView('lifelist')">Bekijk lifelist</button>
+          </article>
+          <article class="profile-card">
+            <h2>Continenten</h2>
+            <div class="continent-list" *ngIf="uniqueSeenContinents.length; else noContinents">
+              <span *ngFor="let item of uniqueSeenContinents">{{ continentLabel(item) }}</span>
+            </div>
+            <ng-template #noContinents><p>Open een vogel en markeer hem als gezien om verspreidingsgebieden toe te voegen.</p></ng-template>
+          </article>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <nav class="mobile-nav" aria-label="Mobiele navigatie">
+    <button *ngFor="let item of navItems.slice(0, 4)" type="button" [class.active]="activeView === item.view" (click)="setView(item.view)">
+      <svg *ngIf="item.icon === 'grid'" viewBox="0 0 24 24"><path d="M4 4h6v6H4V4Zm10 0h6v6h-6V4ZM4 14h6v6H4v-6Zm10 0h6v6h-6v-6Z"/></svg>
+      <svg *ngIf="item.icon === 'map'" viewBox="0 0 24 24"><path d="m3 5 5-2 8 3 5-2v15l-5 2-8-3-5 2V5Zm5 0v11l8 3V8L8 5Z"/></svg>
+      <svg *ngIf="item.icon === 'heart'" viewBox="0 0 24 24"><path d="M12 21S3 15.4 3 8.6C3 5.5 5.3 3 8.2 3c1.7 0 3.1.8 3.8 2 0.7-1.2 2.1-2 3.8-2C18.7 3 21 5.5 21 8.6 21 15.4 12 21 12 21Z"/></svg>
+      <svg *ngIf="item.icon === 'sound'" viewBox="0 0 24 24"><path d="M5 9h3l4-4v14l-4-4H5V9Zm10.5-1.5a6 6 0 0 1 0 9l-1.4-1.4a4 4 0 0 0 0-6.2l1.4-1.4Z"/></svg>
+      <span>{{ item.view === 'discover' ? 'Ontdek' : item.view === 'favorites' ? 'Favorieten' : item.view === 'lifelist' ? 'Lifelist' : 'Kaart' }}</span>
+    </button>
+    <button type="button" [class.active]="activeView === 'profile'" (click)="setView('profile')">
+      <svg viewBox="0 0 24 24"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0H4Z"/></svg>
+      <span>Profiel</span>
+    </button>
+  </nav>
+</div>
+
+<div class="modal-backdrop filter-backdrop" *ngIf="showFilters" (click)="showFilters = false">
+  <section class="filter-panel" (click)="$event.stopPropagation()" role="dialog" aria-modal="true" aria-labelledby="filter-title">
+    <div class="panel-header">
+      <div><p class="eyebrow">Taxonomisch browsen</p><h2 id="filter-title">Filters</h2></div>
+      <button type="button" class="close-button" (click)="showFilters = false" aria-label="Sluiten">x</button>
+    </div>
+    <label>Orde<select [(ngModel)]="order"><option value="">Alle orden</option><option *ngFor="let item of taxonomy.orders" [value]="item">{{ item }}</option></select></label>
+    <label>Familie<select [(ngModel)]="family"><option value="">Alle families</option><option *ngFor="let item of taxonomy.families" [value]="item">{{ item }}</option></select></label>
+    <label>Genus<select [(ngModel)]="genus"><option value="">Alle genera</option><option *ngFor="let item of taxonomy.genera" [value]="item">{{ item }}</option></select></label>
+    <div class="panel-actions"><button type="button" class="ghost-button" (click)="clearFilters(); showFilters = false">Alles wissen</button><button type="button" class="primary-button" (click)="applyFilters()">Toepassen</button></div>
+  </section>
+</div>
+
+<div class="detail-backdrop" *ngIf="detailLoading || detailError || selectedBird" (click)="closeDetail()">
+  <aside class="detail-panel" (click)="$event.stopPropagation()" role="dialog" aria-modal="true" aria-label="Vogeldetail">
+    <button type="button" class="detail-close" (click)="closeDetail()" aria-label="Detail sluiten">x</button>
+
+    <div class="detail-loading" *ngIf="detailLoading"><span class="spinner"></span><p>Soortinformatie ophalen...</p></div>
+    <div class="detail-loading" *ngIf="detailError"><p>{{ detailError }}</p><button type="button" class="primary-button" (click)="closeDetail()">Sluiten</button></div>
+
+    <ng-container *ngIf="selectedBird as bird">
+      <div class="detail-hero">
+        <div class="photo-placeholder"><svg viewBox="0 0 48 48"><path d="M35.5 5.5C21 9.2 12.3 19.7 10.5 39c6.3-11.3 13.8-18 24-20.8-6.8 5-11.7 11.2-15 19.3 9.7-6.5 16.8-16.2 16-32Z"/></svg></div>
+        <img *ngIf="bird.imageUrl" [src]="bird.imageUrl" [alt]="bird.commonName || bird.scientificName" (error)="handleImageError($event)">
+        <div class="detail-photo-actions">
+          <button type="button" [class.active]="isFavorite(bird.id)" (click)="toggleFavorite(bird)"><svg viewBox="0 0 24 24"><path d="M12 21S3 15.4 3 8.6C3 5.5 5.3 3 8.2 3c1.7 0 3.1.8 3.8 2 0.7-1.2 2.1-2 3.8-2C18.7 3 21 5.5 21 8.6 21 15.4 12 21 12 21Z"/></svg></button>
+          <button type="button" (click)="showBirdOnMap(bird)"><svg viewBox="0 0 24 24"><path d="m3 5 5-2 8 3 5-2v15l-5 2-8-3-5 2V5Zm5 0v11l8 3V8L8 5Z"/></svg></button>
+        </div>
+        <small *ngIf="bird.photoAttribution">{{ bird.photoAttribution }}<span *ngIf="bird.photoLicense"> - {{ bird.photoLicense }}</span></small>
+      </div>
+
+      <div class="detail-content">
+        <div class="detail-title-row">
+          <div><h1>{{ bird.commonName || bird.englishName || bird.scientificName }}</h1><p class="scientific-name">{{ bird.scientificName }}</p></div>
+          <div class="status-detail"><span class="status-badge status-{{ bird.iucnStatus.toLowerCase() }}">{{ bird.iucnStatus }}</span><small>{{ statusLabel(bird.iucnStatus) }}</small></div>
+        </div>
+
+        <button type="button" class="seen-detail" [class.active]="isSeen(bird.id)" (click)="toggleSeen(bird)">
+          <svg viewBox="0 0 24 24"><path d="m9 16.2-4.2-4.2L3.4 13.4 9 19 21 7l-1.4-1.4L9 16.2Z"/></svg>{{ isSeen(bird.id) ? 'Gezien - op mijn lifelist' : 'Markeer als gezien' }}
+        </button>
+
+        <section class="detail-section" *ngIf="bird.wikipediaSummary">
+          <h2>Over deze soort</h2><p>{{ bird.wikipediaSummary }}</p>
+        </section>
+
+        <section class="detail-section">
+          <h2>Taxonomie</h2>
+          <dl class="taxonomy-grid">
+            <div><dt>Orde</dt><dd>{{ bird.taxonomy.order || '-' }}</dd></div>
+            <div><dt>Familie</dt><dd>{{ bird.taxonomy.family || '-' }}</dd></div>
+            <div><dt>Genus</dt><dd>{{ bird.taxonomy.genus || '-' }}</dd></div>
+            <div><dt>GBIF-ID</dt><dd>{{ bird.taxonomy.gbifKey || '-' }}</dd></div>
+          </dl>
+        </section>
+
+        <section class="detail-section">
+          <h2>Verspreiding</h2>
+          <div class="distribution-pills" *ngIf="bird.continents.length; else noDistribution"><span *ngFor="let item of bird.continents">{{ continentLabel(item) }}</span></div>
+          <ng-template #noDistribution><p>Geen continentfacet beschikbaar bij GBIF.</p></ng-template>
+        </section>
+
+        <section class="detail-section" *ngIf="bird.recordings.length">
+          <h2>Geluiden</h2>
+          <article class="audio-card" *ngFor="let recording of bird.recordings">
+            <div><strong>{{ recording.type || 'Vogelgeluid' }}</strong><small>{{ recording.recordist }} - {{ recording.country }}</small></div>
+            <audio controls preload="none" [src]="recording.fileUrl"></audio>
+          </article>
+        </section>
+
+        <section class="detail-section source-links">
+          <h2>Meer informatie</h2>
+          <a *ngIf="bird.wikipediaUrl" [href]="bird.wikipediaUrl" target="_blank" rel="noopener"><span>W</span>Wikipedia<small>Open bron</small></a>
+          <a *ngIf="bird.gbifUrl" [href]="bird.gbifUrl" target="_blank" rel="noopener"><span>G</span>GBIF<small>Taxonomie en data</small></a>
+          <a [href]="bird.inaturalistUrl" target="_blank" rel="noopener"><span>iN</span>iNaturalist<small>Foto en observaties</small></a>
+        </section>
+      </div>
+    </ng-container>
+  </aside>
+</div>
+
+<div class="toast" *ngIf="toast" role="status">{{ toast }}</div>
