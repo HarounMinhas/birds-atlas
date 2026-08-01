@@ -217,10 +217,11 @@ public sealed class BirdSearchService
         var key = $"bird-name-order:{taxonId}:{normalizedQuery.ToLowerInvariant()}";
         if (_cache.TryGetValue<IReadOnlyList<SearchTaxon>>(key, out var cached)) return cached;
 
-        const int perPage = 500;
+        const int perPage = 200;
         var all = new List<SearchTaxon>();
+        long total = long.MaxValue;
         long? idAbove = null;
-        while (true)
+        while (all.Count < total)
         {
             var queryPart = normalizedQuery.Length == 0
                 ? string.Empty
@@ -228,13 +229,13 @@ public sealed class BirdSearchService
             var cursorPart = idAbove is null ? string.Empty : $"&id_above={idAbove.Value}";
             var path = $"v1/taxa?taxon_id={taxonId}&rank=species&is_active=true&all_names=true&locale=nl&per_page={perPage}&page=1&order_by=id&order=asc{cursorPart}{queryPart}";
             var source = await FetchTaxaAsync(path, cancellationToken);
+            total = source.Total;
             if (source.Taxa.Count == 0) break;
 
             all.AddRange(source.Taxa);
             var nextId = source.Taxa[^1].Id;
             if (idAbove is not null && nextId <= idAbove.Value) break;
             idAbove = nextId;
-            if (source.Taxa.Count < perPage) break;
         }
 
         var ordered = all
@@ -380,6 +381,14 @@ public sealed class BirdSearchService
             var found = (GetLong(document.RootElement, "count") ?? 0) > 0;
             _cache.Set(key, found, TimeSpan.FromHours(18));
             return found;
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
+        {
+            return false;
         }
         finally
         {
