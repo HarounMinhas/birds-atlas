@@ -445,22 +445,44 @@ public sealed class BirdDataService
         try
         {
             var client = _httpClientFactory.CreateClient("inat");
-            using var response = await client.GetAsync(
-                $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page={perPage}&order_by=observations_count&order=desc&locale=en",
-                cancellationToken);
-            if (!response.IsSuccessStatusCode) return Array.Empty<string>();
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            long total = long.MaxValue;
+            long processed = 0;
+            var page = 1;
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            if (!TryGetArray(document.RootElement, "results", out var results)) return Array.Empty<string>();
-            return results.EnumerateArray()
-                .Select(result => GetString(result, "name"))
-                .Where(name => name.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            while (processed < total)
+            {
+                using var response = await client.GetAsync(
+                    $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page={perPage}&page={page}&order_by=id&order=asc&locale=en",
+                    cancellationToken);
+                if (!response.IsSuccessStatusCode) break;
+
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+                total = GetLong(document.RootElement, "total_results") ?? 0;
+                if (!TryGetArray(document.RootElement, "results", out var results)) break;
+
+                var pageCount = 0;
+                foreach (var result in results.EnumerateArray())
+                {
+                    pageCount += 1;
+                    var name = GetString(result, "name");
+                    if (name.Length > 0) names.Add(name);
+                }
+
+                if (pageCount == 0) break;
+                processed += pageCount;
+                page += 1;
+            }
+
+            return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Taxonomy option lookup timed out for rank {Rank}", rank);
+            return Array.Empty<string>();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
         {
             _logger.LogWarning(exception, "Taxonomy option lookup failed for rank {Rank}", rank);
             return Array.Empty<string>();
