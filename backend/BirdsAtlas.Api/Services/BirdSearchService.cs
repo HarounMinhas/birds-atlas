@@ -220,22 +220,19 @@ public sealed class BirdSearchService
         const int perPage = 200;
         var all = new List<SearchTaxon>();
         long total = long.MaxValue;
-        long? idAbove = null;
+        var sourcePage = 1;
         while (all.Count < total)
         {
             var queryPart = normalizedQuery.Length == 0
                 ? string.Empty
                 : $"&q={Uri.EscapeDataString(normalizedQuery)}";
-            var cursorPart = idAbove is null ? string.Empty : $"&id_above={idAbove.Value}";
-            var path = $"v1/taxa?taxon_id={taxonId}&rank=species&is_active=true&all_names=true&locale=nl&per_page={perPage}&page=1&order_by=id&order=asc{cursorPart}{queryPart}";
+            var path = $"v1/taxa?taxon_id={taxonId}&rank=species&is_active=true&all_names=true&locale=nl&per_page={perPage}&page={sourcePage}&order_by=id&order=asc{queryPart}";
             var source = await FetchTaxaAsync(path, cancellationToken);
             total = source.Total;
             if (source.Taxa.Count == 0) break;
 
             all.AddRange(source.Taxa);
-            var nextId = source.Taxa[^1].Id;
-            if (idAbove is not null && nextId <= idAbove.Value) break;
-            idAbove = nextId;
+            sourcePage++;
         }
 
         var ordered = all
