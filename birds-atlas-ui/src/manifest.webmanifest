@@ -1,0 +1,12 @@
+{
+  "name": "Birds Atlas",
+  "short_name": "Birds Atlas",
+  "description": "Encyclopedisch vogelplatform — live data via GBIF, iNaturalist & Xeno-canto",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f7f4",
+  "theme_color": "#2d7a3a",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

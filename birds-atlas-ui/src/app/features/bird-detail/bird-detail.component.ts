@@ -1,109 +1,182 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, inject, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterModule } from '@angular/router';
 import { BirdService } from '../../core/services/bird.service';
+import { WatchedService } from '../../core/services/watched.service';
+import { IucnClassPipe, IucnLabelPipe } from '../../core/pipes/iucn.pipe';
+import { ContinentLabelPipe } from '../../core/pipes/continent-label.pipe';
 import { BirdDetail } from '../../core/models/bird.model';
 
 @Component({
   selector: 'app-bird-detail',
   standalone: true,
-  imports: [CommonModule, RouterModule],
+  imports: [CommonModule, RouterModule, IucnClassPipe, IucnLabelPipe, ContinentLabelPipe],
+  styles: [`
+    :host { display: block; }
+    .section-title { font-size: var(--text-sm); font-weight: 700; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: var(--space-3); }
+  `],
   template: `
-    <div class="container py-4" *ngIf="bird; else spinner">
-      <a routerLink="/birds" class="btn btn-sm btn-outline-secondary mb-3">‹ Terug</a>
+    <div *ngIf="bird(); else loading">
+      <button class="back-btn" routerLink="/birds">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <polyline points="15 18 9 12 15 6"/>
+        </svg>
+        Terug naar overzicht
+      </button>
 
-      <div class="row g-4">
-        <div class="col-md-4">
-          <img [src]="bird.imageUrl || 'assets/bird-placeholder.svg'"
-            [alt]="bird.commonName"
-            class="img-fluid rounded-3 shadow w-100" style="max-height:380px;object-fit:cover"
-            loading="lazy">
-          <p class="text-muted mt-1" style="font-size:.68rem">Foto via iNaturalist (CC)</p>
+      <div class="detail-hero">
+        <!-- Left: image + sounds -->
+        <div>
+          <div class="detail-img">
+            <img *ngIf="bird()!.imageUrl"
+              [src]="bird()!.imageUrl" [alt]="bird()!.commonName"
+              style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius-2xl)"
+              loading="lazy" (error)="onImgError($event)">
+            <span *ngIf="!bird()!.imageUrl" role="img" style="font-size:5rem">🐦</span>
+          </div>
+          <p class="img-credit" *ngIf="bird()!.imageUrl">
+            📷 iNaturalist — Creative Commons
+          </p>
 
-          <!-- Geluiden -->
-          <div *ngIf="bird.sounds.length > 0" class="mt-3">
-            <h6 class="fw-semibold">🔊 Geluiden <span class="badge bg-secondary">Xeno-canto</span></h6>
-            <div *ngFor="let s of bird.sounds" class="mb-2">
-              <audio controls class="w-100" style="height:36px">
-                <source [src]="s.url">
+          <!-- Sounds -->
+          <div class="sounds-card" *ngIf="bird()!.sounds?.length">
+            <div class="sounds-title">
+              🔊 Vogelgeluiden
+              <span class="detail-tag" style="margin-left:.35rem">Xeno-canto</span>
+            </div>
+            <div class="sound-item" *ngFor="let s of bird()!.sounds">
+              <button class="play-btn" [attr.aria-label]="'Speel geluid af'">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+              </button>
+              <div class="audio-track">
+                <div class="audio-bar"><div class="audio-fill" style="width:0"></div></div>
+                <div class="audio-meta">{{ s.attribution ?? 'Onbekend' }} &middot; {{ s.license ?? 'CC' }}</div>
+              </div>
+              <audio [src]="s.url" preload="none" style="display:none"
+                #audioEl
+                (timeupdate)="onTimeUpdate(audioEl, s.url)"
+                (ended)="onEnded(s.url)">
               </audio>
-              <p class="text-muted mb-0" style="font-size:.65rem">{{ s.attribution }} &mdash; {{ s.license }}</p>
             </div>
           </div>
         </div>
 
-        <div class="col-md-8">
-          <h1 class="fw-bold">{{ bird.commonName }}</h1>
-          <p class="fst-italic text-muted fs-5 mb-1">{{ bird.scientificName }}</p>
+        <!-- Right: info -->
+        <div>
+          <h1 class="detail-name">{{ bird()!.commonName }}</h1>
+          <p class="detail-sci">{{ bird()!.scientificName }}</p>
 
-          <span class="badge fs-6 mb-3" [ngClass]="statusClass(bird.conservationStatus)">
-            {{ bird.conservationStatus ?? 'NE' }} &mdash; {{ statusLabel(bird.conservationStatus) }}
-          </span>
+          <div class="detail-badges">
+            <span class="status-badge" style="font-size:.8rem;padding:.3rem .85rem"
+              [ngClass]="bird()!.conservationStatus | iucnClass">
+              {{ bird()!.conservationStatus ?? 'NE' }} — {{ bird()!.conservationStatus | iucnLabel }}
+            </span>
+            <span class="detail-tag">{{ bird()!.order }}</span>
+            <span class="detail-tag">{{ bird()!.family }}</span>
+          </div>
 
-          <p *ngIf="bird.description" class="text-secondary">{{ bird.description }}</p>
+          <p class="detail-description" *ngIf="bird()!.description">
+            {{ bird()!.description }}
+          </p>
+          <p class="detail-description" *ngIf="!bird()!.description" style="font-style:italic">
+            Geen beschrijving beschikbaar. Bekijk Wikipedia of GBIF voor meer informatie.
+          </p>
 
-          <!-- Taxonomie -->
-          <div class="row g-2 mb-3">
-            <div class="col-4" *ngFor="let f of [
-              {label:'Orde',    value:bird.order},
-              {label:'Familie', value:bird.family},
-              {label:'Genus',   value:bird.genus}
-            ]">
-              <div class="border rounded p-2 small">
-                <span class="text-muted d-block">{{ f.label }}</span>
-                <strong>{{ f.value || '—' }}</strong>
-              </div>
+          <!-- Taxonomy -->
+          <div class="section-title">Taxonomie</div>
+          <div class="taxonomy-grid">
+            <div class="taxon-box">
+              <div class="taxon-label">Orde</div>
+              <div class="taxon-value">{{ bird()!.order || '—' }}</div>
+            </div>
+            <div class="taxon-box">
+              <div class="taxon-label">Familie</div>
+              <div class="taxon-value">{{ bird()!.family || '—' }}</div>
+            </div>
+            <div class="taxon-box">
+              <div class="taxon-label">Genus</div>
+              <div class="taxon-value">{{ bird()!.genus || '—' }}</div>
+            </div>
+            <div class="taxon-box">
+              <div class="taxon-label">IUCN</div>
+              <div class="taxon-value">{{ bird()!.conservationStatus ?? 'NE' }}</div>
+            </div>
+            <div class="taxon-box">
+              <div class="taxon-label">GBIF ID</div>
+              <div class="taxon-value" style="font-family:monospace;font-size:.75rem">{{ bird()!.gbifKey }}</div>
+            </div>
+            <div class="taxon-box" *ngIf="bird()!.inatTaxonId">
+              <div class="taxon-label">iNat ID</div>
+              <div class="taxon-value" style="font-family:monospace;font-size:.75rem">{{ bird()!.inatTaxonId }}</div>
             </div>
           </div>
 
-          <!-- Verspreiding -->
-          <h6 class="fw-semibold">🗺️ Verspreiding</h6>
-          <div class="d-flex flex-wrap gap-2 mb-3">
-            <span *ngFor="let c of bird.continents" class="badge bg-success">{{ contLabel(c) }}</span>
-            <span *ngIf="!bird.continents.length" class="text-muted small">Niet beschikbaar</span>
+          <!-- Continents -->
+          <div class="section-title">🗺️ Verspreiding</div>
+          <div class="continent-pills" *ngIf="bird()!.continents?.length">
+            <span class="continent-pill" *ngFor="let c of bird()!.continents">
+              {{ c | continentLabel }}
+            </span>
           </div>
+          <p *ngIf="!bird()!.continents?.length" style="font-size:var(--text-sm);color:var(--color-text-faint)">Verspreiding niet beschikbaar</p>
 
-          <!-- Links -->
-          <div class="d-flex gap-2 mt-3">
-            <a *ngIf="bird.wikipediaUrl" [href]="bird.wikipediaUrl" target="_blank"
-              class="btn btn-outline-dark btn-sm">📖 Wikipedia</a>
-            <a [href]="'https://www.gbif.org/species/' + bird.gbifKey" target="_blank"
-              class="btn btn-outline-success btn-sm">GBIF</a>
-            <a *ngIf="bird.inatTaxonId" [href]="'https://www.inaturalist.org/taxa/' + bird.inatTaxonId" target="_blank"
-              class="btn btn-outline-secondary btn-sm">iNaturalist</a>
+          <!-- Actions -->
+          <div style="display:flex;flex-wrap:wrap;gap:.5rem;margin-top:var(--space-5)">
+            <button class="btn btn-primary" (click)="toggleWatch()">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                [attr.fill]="isWatched() ? '#fff' : 'none'">
+                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+              </svg>
+              {{ isWatched() ? 'Verwijder uit lijst' : 'Markeer als gezien' }}
+            </button>
+            <a *ngIf="bird()!.wikipediaUrl" [href]="bird()!.wikipediaUrl" target="_blank" rel="noopener noreferrer"
+              class="btn btn-outline">📖 Wikipedia</a>
+            <a [href]="'https://www.gbif.org/species/' + bird()!.gbifKey" target="_blank" rel="noopener noreferrer"
+              class="btn btn-outline">GBIF ↗</a>
+            <a *ngIf="bird()!.inatTaxonId" [href]="'https://www.inaturalist.org/taxa/' + bird()!.inatTaxonId"
+              target="_blank" rel="noopener noreferrer" class="btn btn-outline">iNaturalist ↗</a>
           </div>
         </div>
       </div>
     </div>
 
-    <ng-template #spinner>
-      <div class="text-center py-5">
-        <div class="spinner-border text-success"></div>
-        <p class="mt-2 text-muted small">Vogeldata ophalen...</p>
-      </div>
+    <ng-template #loading>
+      <div class="spinner-wrap"><div class="spinner"></div></div>
     </ng-template>
   `
 })
 export class BirdDetailComponent implements OnInit {
-  private route = inject(ActivatedRoute);
-  private svc = inject(BirdService);
-  bird: BirdDetail | null = null;
+  private route   = inject(ActivatedRoute);
+  private svc     = inject(BirdService);
+  watched = inject(WatchedService);
+
+  bird     = signal<BirdDetail | null>(null);
+  progress: Record<string, number> = {};
+  playing:  string | null = null;
 
   ngOnInit(): void {
     const key = Number(this.route.snapshot.paramMap.get('id'));
-    this.svc.getDetail(key).subscribe(b => this.bird = b);
+    this.svc.getDetail(key).subscribe(b => this.bird.set(b));
   }
 
-  contLabel(c: string): string {
-    return ({
-      EUROPE:'\ud83c\uddea\ud83c\uddfa Europa', AFRICA:'\ud83c\udf0d Afrika', ASIA:'\ud83c\udf0f Azi\u00eb',
-      NORTH_AMERICA:'\ud83c\udf0e Noord-Amerika', SOUTH_AMERICA:'\ud83c\udf0e Zuid-Amerika', OCEANIA:'\ud83c\udf0a Oceani\u00eb'
-    } as Record<string, string>)[c] ?? c;
+  isWatched = () => this.bird() ? this.watched.isWatched(this.bird()!.gbifKey) : false;
+
+  toggleWatch(): void {
+    const b = this.bird();
+    if (!b) return;
+    this.watched.toggle({
+      gbifKey: b.gbifKey, commonName: b.commonName, scientificName: b.scientificName,
+      order: b.order, family: b.family, conservationStatus: b.conservationStatus,
+      thumbnailUrl: b.thumbnailUrl, continents: b.continents
+    });
   }
-  statusClass(s: string | null): string {
-    return ({ LC:'bg-success', NT:'bg-info text-dark', VU:'bg-warning text-dark', EN:'bg-danger', CR:'bg-dark' } as any)[s ?? ''] ?? 'bg-secondary';
+
+  onTimeUpdate(el: HTMLAudioElement, url: string): void {
+    if (el.duration) this.progress[url] = (el.currentTime / el.duration) * 100;
   }
-  statusLabel(s: string | null): string {
-    return ({ LC:'Niet bedreigd', NT:'Bijna bedreigd', VU:'Kwetsbaar', EN:'Bedreigd', CR:'Kritiek' } as any)[s ?? ''] ?? 'Niet ge\u00ebvalueerd';
+  onEnded(url: string): void { this.progress[url] = 0; }
+
+  onImgError(e: Event): void {
+    (e.target as HTMLImageElement).closest('.detail-img')!.innerHTML = '<span style="font-size:5rem">🐦</span>';
   }
 }
