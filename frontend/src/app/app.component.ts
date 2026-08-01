@@ -36,6 +36,8 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly subscriptions = new Subscription();
   private birdListSubscription?: Subscription;
   private birdListRequestToken = 0;
+  private detailSubscription?: Subscription;
+  private detailRequestToken = 0;
   private searchTimer?: ReturnType<typeof setTimeout>;
   private map?: L.Map;
   private readonly mapLayer = L.layerGroup();
@@ -184,26 +186,40 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   openDetail(id: number): void {
+    const token = ++this.detailRequestToken;
+    this.detailSubscription?.unsubscribe();
     this.detailLoading = true;
     this.detailError = '';
     this.selectedBird = null;
     this.pagesViewed += 1;
     localStorage.setItem('birdatlas:pagesViewed', String(this.pagesViewed));
 
-    this.subscriptions.add(
-      this.api.getBird(id)
-        .pipe(finalize(() => this.detailLoading = false))
-        .subscribe({
-          next: (bird) => {
-            this.selectedBird = bird;
-            this.refreshStoredBird(bird);
-          },
-          error: () => this.detailError = 'De soortinformatie kon niet worden geladen.'
-        })
-    );
+    const request = this.api.getBird(id)
+      .pipe(finalize(() => {
+        if (token === this.detailRequestToken) this.detailLoading = false;
+      }))
+      .subscribe({
+        next: (bird) => {
+          if (token !== this.detailRequestToken) return;
+          this.selectedBird = bird;
+          this.refreshStoredBird(bird);
+        },
+        error: () => {
+          if (token === this.detailRequestToken) {
+            this.detailError = 'De soortinformatie kon niet worden geladen.';
+          }
+        }
+      });
+
+    this.detailSubscription = request;
+    this.subscriptions.add(request);
   }
 
   closeDetail(): void {
+    this.detailRequestToken += 1;
+    this.detailSubscription?.unsubscribe();
+    this.detailSubscription = undefined;
+    this.detailLoading = false;
     this.selectedBird = null;
     this.detailError = '';
   }
