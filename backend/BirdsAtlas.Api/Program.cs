@@ -34,6 +34,7 @@ builder.Services.AddHttpClient("xeno", client =>
     client.DefaultRequestHeaders.UserAgent.ParseAdd("BirdsAtlas/1.0 (+https://github.com/HarounMinhas/birds-atlas)");
 });
 builder.Services.AddSingleton<BirdDataService>();
+builder.Services.AddSingleton<BirdSearchService>();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     policy.WithOrigins("http://localhost:4200").AllowAnyHeader().AllowAnyMethod()));
 
@@ -52,10 +53,10 @@ app.MapGet("/api/birds", async (
     string? family,
     string? genus,
     string? sort,
-    BirdDataService service,
+    BirdSearchService service,
     CancellationToken cancellationToken) =>
 {
-    var result = await service.SearchBirdsAsync(
+    var result = await service.SearchAsync(
         q,
         Math.Clamp(page ?? 1, 1, 10_000),
         Math.Clamp(pageSize ?? 24, 1, 48),
