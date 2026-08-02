@@ -41,6 +41,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private searchTimer?: ReturnType<typeof setTimeout>;
   private map?: L.Map;
   private readonly mapLayer = L.layerGroup();
+  private mapSubscriptions = new Subscription();
   private mapRequestToken = 0;
 
   readonly navItems: NavItem[] = [
@@ -115,8 +116,11 @@ export class AppComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.subscriptions.unsubscribe();
+    this.mapSubscriptions.unsubscribe();
     if (this.searchTimer) clearTimeout(this.searchTimer);
-    this.destroyMap();
+    this.mapLayer.clearLayers();
+    this.map?.remove();
+    this.map = undefined;
   }
 
   get visibleBirds(): BirdSummary[] {
@@ -383,7 +387,7 @@ export class AppComponent implements OnInit, OnDestroy {
       this.map.invalidateSize();
     }
 
-    const token = ++this.mapRequestToken;
+    const token = this.beginMapRequest();
     this.mapLayer.clearLayers();
     this.mapError = '';
     this.mapSpeciesNames = [];
@@ -405,34 +409,40 @@ export class AppComponent implements OnInit, OnDestroy {
       this.api.getBird(id).pipe(catchError(() => of(null)))
     );
 
-    this.subscriptions.add(
-      forkJoin(detailRequests).subscribe({
-        next: (details) => {
-          if (token !== this.mapRequestToken) return;
-          for (const detail of details) {
-            if (detail) this.upsertComparisonBird(detail);
-          }
-          this.persistComparisonState();
+    const request = forkJoin(detailRequests).subscribe({
+      next: (details) => {
+        if (token !== this.mapRequestToken) return;
+        for (const detail of details) {
+          if (detail) this.upsertComparisonBird(detail);
+        }
+        this.persistComparisonState();
 
-          const refreshed = this.resolveMapBirds();
-          if (!refreshed.birds.length) {
-            this.mapLoading = false;
-            this.mapError = 'De geselecteerde soorten konden niet opnieuw worden geladen.';
-            return;
-          }
-          this.loadOccurrenceLayers(refreshed.birds, token, refreshed.unresolvedIds.length > 0);
-        },
-        error: () => {
-          if (token !== this.mapRequestToken) return;
+        const refreshed = this.resolveMapBirds();
+        if (!refreshed.birds.length) {
           this.mapLoading = false;
           this.mapError = 'De geselecteerde soorten konden niet opnieuw worden geladen.';
+          return;
         }
-      })
-    );
+        this.loadOccurrenceLayers(refreshed.birds, token, refreshed.unresolvedIds.length > 0);
+      },
+      error: () => {
+        if (token !== this.mapRequestToken) return;
+        this.mapLoading = false;
+        this.mapError = 'De geselecteerde soorten konden niet opnieuw worden geladen.';
+      }
+    });
+    this.mapSubscriptions.add(request);
+  }
+
+  private beginMapRequest(): number {
+    this.mapRequestToken += 1;
+    this.mapSubscriptions.unsubscribe();
+    this.mapSubscriptions = new Subscription();
+    return this.mapRequestToken;
   }
 
   private destroyMap(): void {
-    this.mapRequestToken += 1;
+    this.beginMapRequest();
     this.mapLoading = false;
     this.mapLayer.clearLayers();
     this.map?.remove();
@@ -486,7 +496,7 @@ export class AppComponent implements OnInit, OnDestroy {
             if (token === this.mapRequestToken) hadRequestError = true;
           }
         });
-      this.subscriptions.add(request);
+      this.mapSubscriptions.add(request);
     });
   }
 
