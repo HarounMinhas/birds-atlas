@@ -79,11 +79,11 @@ public sealed class BirdSearchService
         var offset = (page - 1) * pageSize;
         var needed = offset + pageSize + 1;
         var matches = new List<BirdSummary>(needed);
+        var seenIds = new HashSet<long>();
         long? expectedTotal = null;
-        long processed = 0;
         var sourcePage = 1;
 
-        while (matches.Count < needed && (expectedTotal is null || processed < expectedTotal.Value))
+        while (matches.Count < needed && (expectedTotal is null || seenIds.Count < expectedTotal.Value))
         {
             var source = await FetchPageAsync(query, sourcePage, sourcePageSize, taxonId, cancellationToken);
             if (expectedTotal is null)
@@ -93,20 +93,29 @@ public sealed class BirdSearchService
 
             if (source.Taxa.Count == 0)
             {
-                if (processed < expectedTotal.Value)
+                if (seenIds.Count < expectedTotal.Value)
                     throw new InvalidOperationException("iNaturalist species pagination stopped before total_results was reached.");
                 break;
             }
 
-            processed += source.Taxa.Count;
-            if (processed > expectedTotal.Value)
+            foreach (var taxon in source.Taxa)
+            {
+                if (!seenIds.Add(taxon.Id))
+                {
+                    throw new InvalidOperationException(
+                        $"iNaturalist returned duplicate species id {taxon.Id} during observation-sorted continent pagination.");
+                }
+            }
+
+            if (seenIds.Count > expectedTotal.Value)
                 throw new InvalidOperationException("iNaturalist species pagination exceeded total_results.");
 
             matches.AddRange(await FilterContinentAsync(source.Taxa, continent, cancellationToken));
             sourcePage++;
         }
 
-        return BuildFilteredResponse(matches, expectedTotal is not null && processed >= expectedTotal.Value, page, pageSize);
+        var exhausted = expectedTotal is not null && seenIds.Count == expectedTotal.Value;
+        return BuildFilteredResponse(matches, exhausted, page, pageSize);
     }
 
     private async Task<BirdListResponse> FilterOrderedSourceAsync(
@@ -297,8 +306,14 @@ public sealed class BirdSearchService
             throw new JsonException("iNaturalist species response omitted results.");
 
         var taxa = new List<SearchTaxon>();
+        var pageIds = new HashSet<long>();
         foreach (var result in results.EnumerateArray())
-            taxa.Add(ParseTaxon(result));
+        {
+            var taxon = ParseTaxon(result);
+            if (!pageIds.Add(taxon.Id))
+                throw new JsonException($"iNaturalist species page contained duplicate id {taxon.Id}.");
+            taxa.Add(taxon);
+        }
         if (taxa.Count > total)
             throw new JsonException("iNaturalist species response contained more results than total_results.");
 
@@ -346,13 +361,13 @@ public sealed class BirdSearchService
 
         const int perPage = 100;
         var client = _clients.CreateClient("inat");
+        var seenIds = new HashSet<long>();
         long? expectedTotal = null;
-        long processed = 0;
         var page = 1;
 
-        while (expectedTotal is null || processed < expectedTotal.Value)
+        while (expectedTotal is null || seenIds.Count < expectedTotal.Value)
         {
-            var path = $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page={perPage}&page={page}&locale=en&q={Uri.EscapeDataString(name)}";
+            var path = $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page={perPage}&page={page}&order_by=id&order=asc&locale=en&q={Uri.EscapeDataString(name)}";
             using var response = await client.GetAsync(path, cancellationToken);
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -377,29 +392,38 @@ public sealed class BirdSearchService
                     throw new JsonException($"iNaturalist {rank} filter response contained a non-object record.");
                 pageCount++;
 
+                var id = GetLong(result, "id")
+                    ?? throw new JsonException($"iNaturalist {rank} filter record omitted id.");
+                if (!seenIds.Add(id))
+                    throw new JsonException($"iNaturalist {rank} filter pagination returned duplicate id {id}.");
+
                 var resultName = GetString(result, "name");
+                if (resultName.Length == 0)
+                    throw new JsonException($"iNaturalist {rank} filter record {id} omitted name.");
                 var resultRank = GetString(result, "rank");
+                if (resultRank.Length == 0)
+                    throw new JsonException($"iNaturalist {rank} filter record {id} omitted rank.");
+
                 if (!resultName.Equals(name, StringComparison.OrdinalIgnoreCase)
                     || !resultRank.Equals(rank, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
 
-                var id = GetLong(result, "id")
-                    ?? throw new JsonException($"iNaturalist {rank} filter record omitted id.");
                 var resolved = new ResolvedTaxon(id, rank, GetLongSet(result, "ancestor_ids"));
                 _cache.Set(key, resolved, TimeSpan.FromHours(12));
                 return resolved;
             }
 
-            if (pageCount == 0 && processed < expectedTotal.Value)
+            if (pageCount == 0 && seenIds.Count < expectedTotal.Value)
                 throw new InvalidOperationException($"iNaturalist pagination stopped while resolving {rank} {name}.");
-            processed += pageCount;
-            if (processed > expectedTotal.Value)
+            if (seenIds.Count > expectedTotal.Value)
                 throw new InvalidOperationException($"iNaturalist pagination exceeded total_results while resolving {rank} {name}.");
             page++;
         }
 
+        if (expectedTotal is null || seenIds.Count != expectedTotal.Value)
+            throw new InvalidOperationException($"iNaturalist pagination was incomplete while resolving {rank} {name}.");
         return null;
     }
 
@@ -607,28 +631,44 @@ public sealed class BirdSearchService
 
     private static bool TryArray(JsonElement element, string name, out JsonElement array)
     {
-        if (element.TryGetProperty(name, out array) && array.ValueKind == JsonValueKind.Array) return true;
         array = default;
-        return false;
+        if (element.ValueKind != JsonValueKind.Object) return false;
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+            return false;
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new JsonException($"JSON property {name} was not an array.");
+        array = value;
+        return true;
     }
 
-    private static string GetString(JsonElement element, string name) =>
-        element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString() ?? string.Empty
-            : string.Empty;
+    private static string GetString(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object) return string.Empty;
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+            return string.Empty;
+        if (value.ValueKind != JsonValueKind.String)
+            throw new JsonException($"JSON property {name} was not a string.");
+        return value.GetString() ?? string.Empty;
+    }
 
     private static long? GetLong(JsonElement element, string name)
     {
-        if (!element.TryGetProperty(name, out var value)) return null;
+        if (element.ValueKind != JsonValueKind.Object) return null;
+        if (!element.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)) return number;
-        return value.ValueKind == JsonValueKind.String
-            && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)
-                ? number
-                : null;
+        if (value.ValueKind == JsonValueKind.String
+            && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+        {
+            return number;
+        }
+        throw new JsonException($"JSON property {name} was not a valid integer.");
     }
 
     private static IReadOnlySet<long> GetLongSet(JsonElement element, string name)
     {
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("iNaturalist taxon record was not an object.");
         if (!element.TryGetProperty(name, out var values) || values.ValueKind == JsonValueKind.Null)
             return new HashSet<long>();
         if (values.ValueKind != JsonValueKind.Array)
