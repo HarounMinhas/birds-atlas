@@ -2,6 +2,8 @@ using System.Net.Mime;
 using System.Text.Json.Serialization;
 using BirdsAtlas.Api.Services;
 
+const int maxContinentResultOffset = 240;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -38,6 +40,7 @@ builder.Services.AddHttpClient("xeno", client =>
 });
 builder.Services.AddSingleton<BirdDataService>();
 builder.Services.AddSingleton<BirdSearchService>();
+builder.Services.AddSingleton<BirdTaxonValidator>();
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy =>
     policy.WithOrigins("http://localhost:4200").AllowAnyHeader().AllowAnyMethod()));
 
@@ -61,12 +64,12 @@ app.MapGet("/api/birds", async (
 {
     var requestedPage = Math.Clamp(page ?? 1, 1, 10_000);
     var requestedPageSize = Math.Clamp(pageSize ?? 24, 1, 48);
-    if (!string.IsNullOrWhiteSpace(continent)
-        && !BirdSearchService.IsContinentPageAllowed(requestedPage, requestedPageSize))
+    var offset = (long)(requestedPage - 1) * requestedPageSize;
+    if (!string.IsNullOrWhiteSpace(continent) && offset > maxContinentResultOffset)
     {
         return Results.BadRequest(new
         {
-            message = $"Continent-filtered pagination is limited to an offset of {BirdSearchService.MaxContinentResultOffset} results."
+            message = $"Continent-filtered pagination is limited to an offset of {maxContinentResultOffset} results."
         });
     }
 
@@ -84,8 +87,15 @@ app.MapGet("/api/birds", async (
     return Results.Ok(result);
 });
 
-app.MapGet("/api/birds/{id:long}", async (long id, BirdDataService service, CancellationToken cancellationToken) =>
+app.MapGet("/api/birds/{id:long}", async (
+    long id,
+    BirdTaxonValidator validator,
+    BirdDataService service,
+    CancellationToken cancellationToken) =>
 {
+    if (!await validator.IsActiveBirdSpeciesAsync(id, cancellationToken))
+        return Results.NotFound(new { message = "Bird taxon not found." });
+
     var result = await service.GetBirdAsync(id, cancellationToken);
     return result is null ? Results.NotFound(new { message = "Bird taxon not found." }) : Results.Ok(result);
 });
@@ -93,9 +103,13 @@ app.MapGet("/api/birds/{id:long}", async (long id, BirdDataService service, Canc
 app.MapGet("/api/birds/{id:long}/occurrences", async (
     long id,
     int? limit,
+    BirdTaxonValidator validator,
     BirdDataService service,
     CancellationToken cancellationToken) =>
 {
+    if (!await validator.IsActiveBirdSpeciesAsync(id, cancellationToken))
+        return Results.NotFound(new { message = "Bird taxon not found." });
+
     var result = await service.GetOccurrencesAsync(id, Math.Clamp(limit ?? 300, 1, 500), cancellationToken);
     return Results.Ok(result);
 });
