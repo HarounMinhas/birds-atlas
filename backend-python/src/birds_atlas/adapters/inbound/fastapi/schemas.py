@@ -130,7 +130,7 @@ class BirdDetailDto(BirdSummaryDto):
     recordings: list[AudioRecordingDto]
 
     @classmethod
-    def from_domain(cls, value: BirdDetail) -> BirdDetailDto:
+    def from_detail(cls, value: BirdDetail) -> BirdDetailDto:
         base = BirdSummaryDto.from_domain(value).model_dump()
         return cls(
             **base,
