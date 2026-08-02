@@ -19,6 +19,7 @@ export interface BirdListResponse {
   pageSize: number;
   total: number;
   isEstimate: boolean;
+  hasNextPage: boolean;
   items: BirdSummary[];
 }
 

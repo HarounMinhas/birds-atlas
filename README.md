@@ -52,7 +52,7 @@ De bestaande routes en camelCase JSON-contracten blijven behouden:
 - `GET /api/birds/{id}/occurrences`
 - `GET /api/taxonomy/options`
 
-De Angular-modellen zijn niet gewijzigd. Paginering blijft `page=1`, `pageSize=24`, maximaal 10.000 pagina's en maximaal 48 items. Occurrences blijven standaard 300 en maximaal 500. Continentpagina's met een offset boven 240 worden geweigerd om onbeperkte fan-out naar externe API's te voorkomen. Een continentzoekactie scant bovendien een begrensde bronset en retourneert zo nodig een geschat totaal.
+Paginering blijft `page=1`, `pageSize=24`, maximaal 10.000 pagina's en maximaal 48 items. `total` is exact wanneer `isEstimate=false`; bij een begrensde continentscan is het het aantal daadwerkelijk ontdekte resultaten en staat `isEstimate=true`. `hasNextPage` is alleen waar als na de huidige slice al een resultaat is ontdekt, zodat clients nooit fictieve pagina's uit een schatting afleiden. Occurrences blijven standaard 300 en maximaal 500. Continentpagina's met een offset boven 240 worden geweigerd om onbeperkte fan-out te voorkomen. Zie de volledige inventaris in `docs/FUNCTIONAL_AUDIT.md`.
 
 ## Hexagonale lagen
 
@@ -137,7 +137,7 @@ De composition root maakt herbruikbare `httpx.AsyncClient`-instanties met explic
 
 ## Caching en serverless
 
-`InMemoryTtlCacheAdapter` implementeert `CachePort` met een `asyncio.Lock`. De cache versnelt taxa, GBIF-matches, continentchecks, naamordening en taxonomieopties, maar is niet duurzaam: cold starts beginnen leeg en verschillende Vercel Function-instances delen geen geheugen. Correctheid hangt nooit af van een cachehit. Er worden geen gebruikersgegevens publiek gecachet.
+`InMemoryTtlCacheAdapter` implementeert `CachePort` met een `asyncio.Lock`. De cache versnelt taxa, GBIF-matches, continentchecks, naamordening, de 15 minuten geldige gefilterde continentindex en taxonomieopties. Hij is niet duurzaam: cold starts beginnen leeg en verschillende Vercel Function-instances delen geen geheugen. Correctheid hangt nooit af van een cachehit. Er worden geen gebruikersgegevens publiek gecachet.
 
 ## Vercel
 

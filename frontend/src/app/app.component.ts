@@ -93,6 +93,7 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly pageSize = 24;
   total = 0;
   totalIsEstimate = false;
+  hasNextPage = false;
 
   loading = false;
   error = '';
@@ -140,7 +141,9 @@ export class AppComponent implements OnInit, OnDestroy {
       case 'lifelist': return 'Mijn lifelist';
       case 'map': return 'Verspreidingskaart';
       case 'profile': return 'Mijn vogelprofiel';
-      default: return `${this.total.toLocaleString('nl-NL')} soorten`;
+      default:
+        if (this.loading) return 'Soorten laden...';
+        return `${this.total.toLocaleString('nl-NL')}${this.totalIsEstimate ? '+' : ''} soorten`;
     }
   }
 
@@ -188,7 +191,7 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   changePage(nextPage: number): void {
-    if (nextPage < 1 || nextPage > this.totalPages || nextPage === this.page) return;
+    if (nextPage < 1 || nextPage === this.page || (nextPage > this.page && !this.hasNextPage)) return;
     this.page = nextPage;
     this.loadBirds(false);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -326,6 +329,9 @@ export class AppComponent implements OnInit, OnDestroy {
     this.birdListSubscription?.unsubscribe();
     this.loading = true;
     this.error = '';
+    this.total = 0;
+    this.totalIsEstimate = false;
+    this.hasNextPage = false;
 
     const request = this.api.getBirds({
       q: this.query,
@@ -346,10 +352,14 @@ export class AppComponent implements OnInit, OnDestroy {
         this.birds = response.items;
         this.total = response.total;
         this.totalIsEstimate = response.isEstimate;
+        this.hasNextPage = response.hasNextPage;
       },
       error: () => {
         if (token !== this.birdListRequestToken) return;
         this.birds = [];
+        this.total = 0;
+        this.totalIsEstimate = false;
+        this.hasNextPage = false;
         this.error = 'Birds Atlas kan de databronnen nu niet bereiken. Controleer of de API draait.';
       }
     });

@@ -13,6 +13,7 @@ def test_contract_aliases_match_angular_models() -> None:
         "pageSize",
         "total",
         "isEstimate",
+        "hasNextPage",
         "items",
     }
     detail = set(BirdDetailDto.model_json_schema(by_alias=True)["properties"])

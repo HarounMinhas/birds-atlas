@@ -26,13 +26,18 @@
 - [x] begrensde continentfan-out en diepe-offsetbeveiliging
 - [x] datumintervallen/partiële datums degraderen naar `null`
 - [x] in-memory TTL-cache als niet-durzame optimalisatie
+- [x] stabiele begrensde continentindex met expliciete `hasNextPage`
+- [x] exacte (`isEstimate=false`) en begrensde (`isEstimate=true`) totalen onderscheiden
 
 ## Validatie
 
 - [x] `python -m compileall backend-python`
-- [x] 21 unit-, adapter-, API- en contracttests zonder live netwerk
-- [ ] Angular build in de uitvoeromgeving; vereist een volledige checkout en npm-registrytoegang
+- [x] grens-, regressie-, adapter-, API- en contracttests zonder live netwerk
+- [x] Angular production-build in de uitvoeromgeving
 - [ ] Vercel Preview-smoketest met live externe APIs
 - [ ] Xeno-canto live test met een Preview-secret
 
 De .NET-backend blijft staan totdat de open deploymentchecks zijn bevestigd.
+
+De volledige 50-flow-audit, pagineringssemantiek, bekende serverlessbeperking en verplichte
+Preview-smoke staan in `docs/FUNCTIONAL_AUDIT.md`.

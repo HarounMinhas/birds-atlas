@@ -75,6 +75,7 @@ class BirdListResponseDto(ApiModel):
     page_size: int
     total: int
     is_estimate: bool
+    has_next_page: bool
     items: list[BirdSummaryDto]
 
     @classmethod
@@ -84,6 +85,7 @@ class BirdListResponseDto(ApiModel):
             page_size=value.page_size,
             total=value.total,
             is_estimate=value.is_estimate,
+            has_next_page=value.has_next_page,
             items=[BirdSummaryDto.from_domain(item) for item in value.items],
         )
 

@@ -139,3 +139,85 @@ async def test_concurrency_gates_are_shared_across_requests() -> None:
 
     assert taxonomy.max_active_matches == 1
     assert taxonomy.max_active_occurrences == 1
+
+
+class PagedCatalog:
+    def __init__(self, birds: tuple[Bird, ...]) -> None:
+        self.birds = birds
+        self.calls = 0
+
+    async def search_page(self, **kwargs: Any) -> TaxonPage:
+        self.calls += 1
+        page_size = kwargs["page_size"]
+        start = (kwargs["page"] - 1) * page_size
+        return TaxonPage(len(self.birds), self.birds[start : start + page_size])
+
+
+class AllInEuropeGbif:
+    async def match_species(self, scientific_name: str, *, required: bool) -> GbifTaxonomy:
+        return GbifTaxonomy(int(scientific_name.split()[-1]))
+
+    async def has_occurrence(self, gbif_key: int, continent: str) -> bool:
+        return continent == Continent.EUROPE.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("count", [0, 1, 23, 24, 25, 48, 49])
+async def test_exact_unfiltered_boundaries(count: int) -> None:
+    catalog = PagedCatalog(tuple(bird(index, f"Bird {index}") for index in range(1, count + 1)))
+    use_case = SearchBirds(catalog, AllInEuropeGbif(), FakeCache())
+
+    result = await use_case.execute(BirdSearchQuery(page=1, page_size=24))
+
+    assert result.total == count
+    assert result.is_estimate is False
+    assert result.has_next_page is (count > 24)
+
+
+@pytest.mark.asyncio
+async def test_continent_index_prevents_fictional_third_page_and_stabilizes_total() -> None:
+    catalog = PagedCatalog(tuple(bird(index, f"Bird {index:02}") for index in range(1, 49)))
+    cache = FakeCache()
+    use_case = SearchBirds(catalog, AllInEuropeGbif(), cache)
+
+    page_two = await use_case.execute(
+        BirdSearchQuery(page=2, page_size=24, continent=Continent.EUROPE)
+    )
+    calls_after_index = catalog.calls
+    page_three = await use_case.execute(
+        BirdSearchQuery(page=3, page_size=24, continent=Continent.EUROPE)
+    )
+    page_one_again = await use_case.execute(
+        BirdSearchQuery(page=1, page_size=24, continent=Continent.EUROPE)
+    )
+
+    assert page_two.total == page_three.total == page_one_again.total == 48
+    assert page_two.has_next_page is False
+    assert page_three.items == ()
+    assert page_three.has_next_page is False
+    assert page_three.is_estimate is False
+    assert catalog.calls == calls_after_index
+
+
+@pytest.mark.asyncio
+async def test_scan_cap_exposes_only_verified_navigation() -> None:
+    catalog = PagedCatalog(tuple(bird(index, f"Bird {index:03}") for index in range(1, 80)))
+    use_case = SearchBirds(
+        catalog,
+        AllInEuropeGbif(),
+        FakeCache(),
+        max_continent_source_scan=25,
+    )
+
+    first = await use_case.execute(
+        BirdSearchQuery(page=1, page_size=24, continent=Continent.EUROPE)
+    )
+    second = await use_case.execute(
+        BirdSearchQuery(page=2, page_size=24, continent=Continent.EUROPE)
+    )
+
+    assert first.total == second.total == 25
+    assert first.is_estimate is second.is_estimate is True
+    assert first.has_next_page is True
+    assert len(second.items) == 1
+    assert second.has_next_page is False

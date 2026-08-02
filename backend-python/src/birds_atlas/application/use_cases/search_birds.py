@@ -40,7 +40,7 @@ class SearchBirds:
     async def execute(self, query: BirdSearchQuery) -> BirdSearchResult:
         taxon_id = await self._resolve_taxonomy(query)
         if taxon_id is None:
-            return BirdSearchResult(query.page, query.page_size, 0, False, ())
+            return BirdSearchResult(query.page, query.page_size, 0, False, False, ())
 
         if query.continent is None:
             birds, total = await self._page_without_continent(query, taxon_id)
@@ -49,25 +49,18 @@ class SearchBirds:
                 page_size=query.page_size,
                 total=total,
                 is_estimate=False,
+                has_next_page=query.offset + len(birds) < total,
                 items=tuple(await self._enrich(birds)),
             )
 
         matches, exhausted = await self._continent_matches(query, taxon_id)
         items = tuple(matches[query.offset : query.offset + query.page_size])
-        if exhausted:
-            total = len(matches)
-            estimate = False
-        else:
-            total = max(
-                query.offset + len(items) + 1,
-                query.page * query.page_size + 1,
-            )
-            estimate = True
         return BirdSearchResult(
             query.page,
             query.page_size,
-            total,
-            estimate,
+            len(matches),
+            not exhausted,
+            query.offset + len(items) < len(matches),
             items,
         )
 
@@ -173,21 +166,42 @@ class SearchBirds:
         self, query: BirdSearchQuery, taxon_id: int
     ) -> tuple[list[BirdSummary], bool]:
         assert query.continent is not None
+        cache_key = ":".join(
+            (
+                "bird-continent-index-v2",
+                str(taxon_id),
+                query.query.casefold(),
+                query.continent.value,
+                query.sort.value,
+            )
+        )
+        cached = await self.cache.get(cache_key)
+        if (
+            isinstance(cached, tuple)
+            and len(cached) == 2
+            and isinstance(cached[0], tuple)
+            and isinstance(cached[1], bool)
+            and all(isinstance(item, BirdSummary) for item in cached[0])
+        ):
+            return list(cached[0]), cached[1]
+
         if query.sort.value == "name":
-            return await self._name_ordered_continent_matches(query, taxon_id)
-        return await self._observation_ordered_continent_matches(query, taxon_id)
+            result = await self._name_ordered_continent_matches(query, taxon_id)
+        else:
+            result = await self._observation_ordered_continent_matches(query, taxon_id)
+        await self.cache.set(cache_key, (tuple(result[0]), result[1]), 900)
+        return result
 
     async def _name_ordered_continent_matches(
         self, query: BirdSearchQuery, taxon_id: int
     ) -> tuple[list[BirdSummary], bool]:
         assert query.continent is not None
-        needed = query.offset + query.page_size + 1
         ordered = await self._all_name_ordered(query.query, taxon_id)
         scan_limit = min(len(ordered), self.max_continent_source_scan)
         matches: list[BirdSummary] = []
         scanned = 0
 
-        while len(matches) < needed and scanned < scan_limit:
+        while scanned < scan_limit:
             chunk_end = min(scanned + 100, scan_limit)
             chunk = ordered[scanned:chunk_end]
             scanned = chunk_end
@@ -200,14 +214,13 @@ class SearchBirds:
         self, query: BirdSearchQuery, taxon_id: int
     ) -> tuple[list[BirdSummary], bool]:
         assert query.continent is not None
-        needed = query.offset + query.page_size + 1
         matches: list[BirdSummary] = []
         scanned = 0
         page_number = 1
         total: int | None = None
         seen: set[int] = set()
 
-        while len(matches) < needed and scanned < self.max_continent_source_scan:
+        while scanned < self.max_continent_source_scan:
             source = await self.catalog.search_page(
                 query=query.query,
                 page=page_number,
