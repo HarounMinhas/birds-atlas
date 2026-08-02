@@ -185,6 +185,7 @@ class BirdSearchResult:
     page_size: int
     total: int
     is_estimate: bool
+    has_next_page: bool
     items: tuple[BirdSummary, ...]
 
 

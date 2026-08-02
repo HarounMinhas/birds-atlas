@@ -71,7 +71,7 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow" *ngIf="activeView !== 'discover'">Persoonlijke collectie</p>
-            <h1>{{ currentTitle }}<span *ngIf="activeView === 'discover' && totalIsEstimate" title="Schatting op basis van de externe bron">*</span></h1>
+            <h1 [title]="totalIsEstimate ? 'Minimaal ontdekt binnen de begrensde scan' : ''">{{ currentTitle }}</h1>
           </div>
           <div class="heading-actions" *ngIf="activeView === 'discover'">
             <label class="sort-select">
@@ -172,7 +172,7 @@
         <nav class="pagination" *ngIf="activeView === 'discover' && !loading && !error && totalPages > 1" aria-label="Paginering">
           <button type="button" [disabled]="page === 1" (click)="changePage(page - 1)">Vorige</button>
           <span>Pagina {{ page }} van {{ totalPages }}</span>
-          <button type="button" [disabled]="page === totalPages" (click)="changePage(page + 1)">Volgende</button>
+          <button type="button" [disabled]="!hasNextPage" (click)="changePage(page + 1)">Volgende</button>
         </nav>
       </ng-container>
 
