@@ -61,7 +61,7 @@ public sealed class BirdDataService
             taxon.ObservationCount,
             gbif.UsageKey,
             wikipedia.Summary,
-            wikipedia.Url ?? taxon.WikipediaUrl,
+            wikipedia.Url,
             $"https://www.inaturalist.org/taxa/{taxon.Id}",
             gbif.UsageKey is null ? null : $"https://www.gbif.org/species/{gbif.UsageKey}",
             continents,
@@ -292,11 +292,12 @@ public sealed class BirdDataService
         CancellationToken cancellationToken)
     {
         var candidates = new List<Uri>();
+        string? fallbackUrl = null;
         if (Uri.TryCreate(wikipediaUrl, UriKind.Absolute, out var sourceUri)
-            && sourceUri.Host.EndsWith("wikipedia.org", StringComparison.OrdinalIgnoreCase)
-            && IsHttpUri(sourceUri))
+            && IsWikipediaUri(sourceUri))
         {
             candidates.Add(sourceUri);
+            fallbackUrl = sourceUri.AbsoluteUri;
         }
         candidates.Add(new Uri($"https://en.wikipedia.org/wiki/{Uri.EscapeDataString(scientificName.Replace(' ', '_'))}"));
 
@@ -307,9 +308,13 @@ public sealed class BirdDataService
             {
                 var title = candidate.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
                 if (string.IsNullOrWhiteSpace(title)) continue;
-                var summaryUri = new Uri($"{candidate.Scheme}://{candidate.Host}/api/rest_v1/page/summary/{title}");
+                var summaryUri = new Uri($"https://{candidate.IdnHost}/api/rest_v1/page/summary/{title}");
                 using var response = await client.GetAsync(summaryUri, cancellationToken);
                 if (!response.IsSuccessStatusCode) continue;
+
+                var responseUri = response.RequestMessage?.RequestUri;
+                if (responseUri is null || !IsWikipediaUri(responseUri))
+                    throw new JsonException("Wikipedia summary request was redirected outside the Wikipedia domain.");
 
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
@@ -336,8 +341,11 @@ public sealed class BirdDataService
                         var returnedUrl = GetString(desktop, "page");
                         if (returnedUrl.Length > 0)
                         {
-                            if (!Uri.TryCreate(returnedUrl, UriKind.Absolute, out var parsedUrl) || !IsHttpUri(parsedUrl))
+                            if (!Uri.TryCreate(returnedUrl, UriKind.Absolute, out var parsedUrl)
+                                || !IsWikipediaUri(parsedUrl))
+                            {
                                 throw new JsonException("Wikipedia returned an invalid desktop page URL.");
+                            }
                             pageUrl = parsedUrl.AbsoluteUri;
                         }
                     }
@@ -355,7 +363,7 @@ public sealed class BirdDataService
             }
         }
 
-        return (null, wikipediaUrl);
+        return (null, fallbackUrl);
     }
 
     private async Task<IReadOnlyList<AudioRecording>> GetRecordingsAsync(
@@ -587,8 +595,14 @@ public sealed class BirdDataService
         if (matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase))
             return EmptyGbifMatch(scientificName);
 
+        var rank = GetString(root, "rank");
+        if (rank.Length == 0)
+            throw new JsonException("GBIF species-match response omitted rank for a matched taxon.");
+        if (!IsSuitableGbifSpeciesMatch(matchType, rank))
+            return EmptyGbifMatch(scientificName);
+
         var usageKey = GetLong(root, "usageKey")
-            ?? throw new JsonException("GBIF species-match response omitted usageKey for a matched taxon.");
+            ?? throw new JsonException("GBIF species-match response omitted usageKey for a matched species.");
         return new GbifMatch(
             usageKey,
             GetString(root, "kingdom"),
@@ -627,6 +641,11 @@ public sealed class BirdDataService
         }
         return string.Empty;
     }
+
+    private static bool IsSuitableGbifSpeciesMatch(string matchType, string rank) =>
+        rank.Equals("SPECIES", StringComparison.OrdinalIgnoreCase)
+        && (matchType.Equals("EXACT", StringComparison.OrdinalIgnoreCase)
+            || matchType.Equals("FUZZY", StringComparison.OrdinalIgnoreCase));
 
     private static GbifMatch EmptyGbifMatch(string scientificName) =>
         new(null, string.Empty, string.Empty, "Aves", string.Empty, string.Empty,
@@ -694,6 +713,21 @@ public sealed class BirdDataService
         if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
             throw new JsonException($"JSON property {propertyName} was not a valid date.");
         return date;
+    }
+
+    private static bool IsWikipediaUri(Uri uri)
+    {
+        if (!uri.IsAbsoluteUri
+            || !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+            || !string.IsNullOrEmpty(uri.UserInfo)
+            || !uri.IsDefaultPort)
+        {
+            return false;
+        }
+
+        var host = uri.IdnHost.TrimEnd('.');
+        return host.Equals("wikipedia.org", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".wikipedia.org", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsHttpUri(Uri uri) =>
