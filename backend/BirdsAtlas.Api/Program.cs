@@ -26,6 +26,9 @@ builder.Services.AddHttpClient("wiki", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
     client.DefaultRequestHeaders.UserAgent.ParseAdd("BirdsAtlas/1.0 (+https://github.com/HarounMinhas/birds-atlas)");
+}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false
 });
 builder.Services.AddHttpClient("xeno", client =>
 {
