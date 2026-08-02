@@ -87,7 +87,13 @@ public sealed class BirdSearchService
         {
             var source = await FetchPageAsync(query, sourcePage, sourcePageSize, taxonId, cancellationToken);
             total = source.Total;
-            if (source.Taxa.Count == 0) break;
+            if (source.Taxa.Count == 0)
+            {
+                if (processed < total)
+                    throw new InvalidOperationException("iNaturalist species pagination stopped before total_results was reached.");
+                break;
+            }
+
             processed += source.Taxa.Count;
             matches.AddRange(await FilterContinentAsync(source.Taxa, continent, cancellationToken));
             sourcePage++;
@@ -219,21 +225,42 @@ public sealed class BirdSearchService
 
         const int perPage = 200;
         var all = new List<SearchTaxon>();
-        long total = long.MaxValue;
+        var seenIds = new HashSet<long>();
+        long? expectedTotal = null;
         var sourcePage = 1;
-        while (all.Count < total)
+
+        while (expectedTotal is null || all.Count < expectedTotal.Value)
         {
             var queryPart = normalizedQuery.Length == 0
                 ? string.Empty
                 : $"&q={Uri.EscapeDataString(normalizedQuery)}";
             var path = $"v1/taxa?taxon_id={taxonId}&rank=species&is_active=true&all_names=true&locale=nl&per_page={perPage}&page={sourcePage}&order_by=id&order=asc{queryPart}";
             var source = await FetchTaxaAsync(path, cancellationToken);
-            total = source.Total;
-            if (source.Taxa.Count == 0) break;
 
-            all.AddRange(source.Taxa);
+            if (expectedTotal is null)
+                expectedTotal = source.Total;
+            else if (source.Total != expectedTotal.Value)
+                throw new InvalidOperationException("iNaturalist total_results changed during the A-Z page walk.");
+
+            if (source.Taxa.Count == 0)
+            {
+                if (all.Count < expectedTotal.Value)
+                    throw new InvalidOperationException("iNaturalist A-Z pagination stopped before total_results was reached.");
+                break;
+            }
+
+            foreach (var taxon in source.Taxa)
+            {
+                if (!seenIds.Add(taxon.Id))
+                    throw new JsonException($"iNaturalist returned duplicate species id {taxon.Id} during the A-Z page walk.");
+                all.Add(taxon);
+            }
+
             sourcePage++;
         }
+
+        if (expectedTotal is null || all.Count != expectedTotal.Value)
+            throw new InvalidOperationException("iNaturalist A-Z pagination did not produce the complete species set.");
 
         var ordered = all
             .OrderBy(DisplayName, StringComparer.CurrentCultureIgnoreCase)
@@ -252,15 +279,18 @@ public sealed class BirdSearchService
         response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var total = GetLong(document.RootElement, "total_results") ?? 0;
-        if (!TryArray(document.RootElement, "results", out var results))
-            return (total, Array.Empty<SearchTaxon>());
 
-        var taxa = results.EnumerateArray()
-            .Select(ParseTaxon)
-            .Where(taxon => taxon is not null)
-            .Cast<SearchTaxon>()
-            .ToList();
+        var total = GetLong(document.RootElement, "total_results")
+            ?? throw new JsonException("iNaturalist species response omitted total_results.");
+        if (total < 0)
+            throw new JsonException("iNaturalist species response contained a negative total_results value.");
+        if (!TryArray(document.RootElement, "results", out var results))
+            throw new JsonException("iNaturalist species response omitted results.");
+
+        var taxa = new List<SearchTaxon>();
+        foreach (var result in results.EnumerateArray())
+            taxa.Add(ParseTaxon(result));
+
         return (total, taxa);
     }
 
@@ -306,18 +336,19 @@ public sealed class BirdSearchService
         var client = _clients.CreateClient("inat");
         var path = $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page=100&locale=en&q={Uri.EscapeDataString(name)}";
         using var response = await client.GetAsync(path, cancellationToken);
-        if (!response.IsSuccessStatusCode) return null;
+        response.EnsureSuccessStatusCode();
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        if (!TryArray(document.RootElement, "results", out var results)) return null;
+        if (!TryArray(document.RootElement, "results", out var results))
+            throw new JsonException($"iNaturalist {rank} filter response omitted results.");
 
         foreach (var result in results.EnumerateArray())
         {
             if (!GetString(result, "name").Equals(name, StringComparison.OrdinalIgnoreCase)) continue;
             if (!GetString(result, "rank").Equals(rank, StringComparison.OrdinalIgnoreCase)) continue;
-            var id = GetLong(result, "id");
-            if (id is null) continue;
-            var resolved = new ResolvedTaxon(id.Value, rank, GetLongSet(result, "ancestor_ids"));
+            var id = GetLong(result, "id")
+                ?? throw new JsonException($"iNaturalist {rank} filter record omitted id.");
+            var resolved = new ResolvedTaxon(id, rank, GetLongSet(result, "ancestor_ids"));
             _cache.Set(key, resolved, TimeSpan.FromHours(12));
             return resolved;
         }
@@ -339,11 +370,24 @@ public sealed class BirdSearchService
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var result = new GbifTaxon(
-                GetLong(document.RootElement, "usageKey"),
-                GetString(document.RootElement, "family"),
-                GetString(document.RootElement, "order"),
-                GetString(document.RootElement, "genus"));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                throw new JsonException("GBIF species-match response was not an object.");
+
+            var matchType = GetString(document.RootElement, "matchType");
+            if (matchType.Length == 0)
+                throw new JsonException("GBIF species-match response omitted matchType.");
+
+            var usageKey = GetLong(document.RootElement, "usageKey");
+            if (!matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase) && usageKey is null)
+                throw new JsonException("GBIF species-match response omitted usageKey for a matched taxon.");
+
+            var result = matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase)
+                ? EmptyGbifTaxon()
+                : new GbifTaxon(
+                    usageKey,
+                    GetString(document.RootElement, "family"),
+                    GetString(document.RootElement, "order"),
+                    GetString(document.RootElement, "genus"));
             _cache.Set(key, result, TimeSpan.FromDays(3));
             return result;
         }
@@ -375,7 +419,12 @@ public sealed class BirdSearchService
             if (!response.IsSuccessStatusCode) return false;
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var found = (GetLong(document.RootElement, "count") ?? 0) > 0;
+            var count = GetLong(document.RootElement, "count")
+                ?? throw new JsonException("GBIF occurrence response omitted count.");
+            if (count < 0)
+                throw new JsonException("GBIF occurrence response contained a negative count.");
+
+            var found = count > 0;
             _cache.Set(key, found, TimeSpan.FromHours(18));
             return found;
         }
@@ -393,11 +442,16 @@ public sealed class BirdSearchService
         }
     }
 
-    private static SearchTaxon? ParseTaxon(JsonElement element)
+    private static SearchTaxon ParseTaxon(JsonElement element)
     {
-        var id = GetLong(element, "id");
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("iNaturalist species record was not an object.");
+
+        var id = GetLong(element, "id")
+            ?? throw new JsonException("iNaturalist species record omitted id.");
         var scientificName = GetString(element, "name");
-        if (id is null || scientificName.Length == 0) return null;
+        if (scientificName.Length == 0)
+            throw new JsonException($"iNaturalist species record {id} omitted scientific name.");
 
         var preferred = GetString(element, "preferred_common_name");
         var dutch = LocalizedName(element, "nl", "Dutch");
@@ -421,7 +475,7 @@ public sealed class BirdSearchService
         }
 
         return new SearchTaxon(
-            id.Value,
+            id,
             scientificName,
             dutch.Length > 0 ? dutch : preferred,
             english,
@@ -495,11 +549,18 @@ public sealed class BirdSearchService
 
     private static IReadOnlySet<long> GetLongSet(JsonElement element, string name)
     {
-        if (!TryArray(element, name, out var values)) return new HashSet<long>();
-        return values.EnumerateArray()
-            .Where(value => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _))
-            .Select(value => value.GetInt64())
-            .ToHashSet();
+        if (!element.TryGetProperty(name, out var values)) return new HashSet<long>();
+        if (values.ValueKind != JsonValueKind.Array)
+            throw new JsonException($"iNaturalist response property {name} was not an array.");
+
+        var result = new HashSet<long>();
+        foreach (var value in values.EnumerateArray())
+        {
+            if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt64(out var number))
+                throw new JsonException($"iNaturalist response property {name} contained a non-numeric value.");
+            result.Add(number);
+        }
+        return result;
     }
 
     private static string? EmptyToNull(string value) => value.Length == 0 ? null : value;
