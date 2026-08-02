@@ -27,8 +27,8 @@ class ApiModel(BaseModel):
 
 class BirdSearchRequest(BaseModel):
     q: str | None = None
-    page: int = Field(default=1, ge=1, le=10_000)
-    page_size: int = Field(default=24, alias="pageSize", ge=1, le=48)
+    page: int = 1
+    page_size: int = Field(default=24, alias="pageSize")
     continent: str | None = None
     order: str | None = None
     family: str | None = None
@@ -40,8 +40,8 @@ class BirdSearchRequest(BaseModel):
     def to_domain(self) -> BirdSearchQuery:
         return BirdSearchQuery.normalized(
             query=self.q,
-            page=self.page,
-            page_size=self.page_size,
+            page=max(1, min(self.page, 10_000)),
+            page_size=max(1, min(self.page_size, 48)),
             continent=self.continent,
             order=self.order,
             family=self.family,

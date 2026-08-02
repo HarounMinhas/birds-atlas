@@ -44,9 +44,9 @@ async def get_bird(
 async def get_bird_occurrences(
     bird_id: int,
     response: Response,
-    limit: int = Query(default=300, ge=1, le=500),
+    limit: int = Query(default=300),
     use_case: GetBirdOccurrences = Depends(get_occurrences),
 ) -> list[OccurrencePointDto]:
     response.headers["Cache-Control"] = "public, max-age=30, s-maxage=120"
-    points = await use_case.execute(bird_id, limit)
+    points = await use_case.execute(bird_id, max(1, min(limit, 500)))
     return [OccurrencePointDto.from_domain(point) for point in points]

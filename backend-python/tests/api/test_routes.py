@@ -24,9 +24,14 @@ def test_detail_and_occurrences(client) -> None:
     assert occurrences.json()[0]["eventDate"] is None
 
 
-def test_not_found_and_validation(client) -> None:
+def test_not_found_and_clamping(client) -> None:
     assert client.get("/api/birds/999").status_code == 404
-    assert client.get("/api/birds?pageSize=49").status_code == 422
+    clamped = client.get("/api/birds?page=0&pageSize=49")
+    assert clamped.status_code == 200
+    assert clamped.json()["page"] == 1
+    assert clamped.json()["pageSize"] == 48
+    occurrence = client.get("/api/birds/1/occurrences?limit=999")
+    assert occurrence.status_code == 200
 
 
 def test_taxonomy_options(client) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -34,6 +35,7 @@ class AsyncHttpClient:
             pool=connect_timeout,
         )
         self.provider = provider
+        self._total_timeout = connect_timeout + read_timeout
         self.client = httpx.AsyncClient(
             base_url=base_url,
             timeout=timeout,
@@ -54,8 +56,9 @@ class AsyncHttpClient:
         allow_not_found: bool = False,
     ) -> Any:
         try:
-            response = await self.client.get(path, params=params)
-        except httpx.TimeoutException as exc:
+            async with asyncio.timeout(self._total_timeout):
+                response = await self.client.get(path, params=params)
+        except (TimeoutError, httpx.TimeoutException) as exc:
             logger.warning("upstream_timeout provider=%s path=%s", self.provider, path)
             raise UpstreamTimeoutError(
                 self.provider, f"{self.provider} timed out"

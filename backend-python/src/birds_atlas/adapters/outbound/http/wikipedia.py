@@ -61,11 +61,15 @@ class WikipediaHttpAdapter:
     @staticmethod
     def _safe_wikipedia_url(value: str) -> bool:
         parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
         host = (parsed.hostname or "").rstrip(".").casefold()
         return (
             parsed.scheme.casefold() == "https"
             and parsed.username is None
             and parsed.password is None
-            and parsed.port is None
+            and port is None
             and (host == "wikipedia.org" or host.endswith(".wikipedia.org"))
         )
