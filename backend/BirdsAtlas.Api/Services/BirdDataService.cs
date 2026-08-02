@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using BirdsAtlas.Api.Models;
 using Microsoft.Extensions.Caching.Memory;
@@ -84,50 +85,45 @@ public sealed class BirdDataService
         var taxon = await GetInatTaxonAsync(inatId, cancellationToken);
         if (taxon is null) return Array.Empty<OccurrencePoint>();
 
-        var gbif = await GetGbifMatchAsync(taxon.ScientificName, cancellationToken);
+        // Unlike optional detail enrichment, map data must preserve upstream failures so
+        // the client can distinguish an outage from a genuine zero-result response.
+        var gbif = await GetGbifMatchStrictAsync(taxon.ScientificName, cancellationToken);
         if (gbif.UsageKey is null) return Array.Empty<OccurrencePoint>();
 
-        try
+        var client = _httpClientFactory.CreateClient("gbif");
+        var path = $"v1/occurrence/search?taxon_key={gbif.UsageKey.Value}&has_coordinate=true&limit={limit}";
+        using var response = await client.GetAsync(path, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        if (!TryGetArray(document.RootElement, "results", out var results))
+            throw new JsonException("GBIF occurrence response omitted results.");
+
+        var points = new List<OccurrencePoint>();
+        foreach (var result in results.EnumerateArray())
         {
-            var client = _httpClientFactory.CreateClient("gbif");
-            var path = $"v1/occurrence/search?taxon_key={gbif.UsageKey.Value}&has_coordinate=true&limit={limit}";
-            using var response = await client.GetAsync(path, cancellationToken);
-            if (!response.IsSuccessStatusCode) return Array.Empty<OccurrencePoint>();
+            if (result.ValueKind != JsonValueKind.Object)
+                throw new JsonException("GBIF occurrence response contained a non-object record.");
 
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            if (!TryGetArray(document.RootElement, "results", out var results)) return Array.Empty<OccurrencePoint>();
+            var latitude = GetDouble(result, "decimalLatitude");
+            var longitude = GetDouble(result, "decimalLongitude");
+            if (latitude is null || longitude is null) continue;
+            if (latitude is < -90 or > 90 || longitude is < -180 or > 180)
+                throw new JsonException("GBIF occurrence response contained invalid coordinates.");
 
-            var points = new List<OccurrencePoint>();
-            foreach (var result in results.EnumerateArray())
-            {
-                var latitude = GetDouble(result, "decimalLatitude");
-                var longitude = GetDouble(result, "decimalLongitude");
-                if (latitude is null || longitude is null) continue;
-
-                var key = GetLong(result, "key") ?? 0;
-                points.Add(new OccurrencePoint(
-                    key,
-                    latitude.Value,
-                    longitude.Value,
-                    GetString(result, "country"),
-                    GetString(result, "locality"),
-                    GetDate(result, "eventDate"),
-                    key > 0 ? $"https://www.gbif.org/occurrence/{key}" : $"https://www.gbif.org/species/{gbif.UsageKey}"));
-            }
-
-            return points;
+            var key = GetLong(result, "key") ?? 0;
+            points.Add(new OccurrencePoint(
+                key,
+                latitude.Value,
+                longitude.Value,
+                GetString(result, "country"),
+                GetString(result, "locality"),
+                GetDate(result, "eventDate"),
+                key > 0 ? $"https://www.gbif.org/occurrence/{key}" : $"https://www.gbif.org/species/{gbif.UsageKey}"));
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-        {
-            _logger.LogWarning("GBIF occurrence lookup timed out for iNaturalist taxon {TaxonId}", inatId);
-            return Array.Empty<OccurrencePoint>();
-        }
-        catch (Exception exception) when (exception is HttpRequestException or JsonException)
-        {
-            _logger.LogWarning(exception, "GBIF occurrence lookup failed for iNaturalist taxon {TaxonId}", inatId);
-            return Array.Empty<OccurrencePoint>();
-        }
+
+        return points;
     }
 
     public async Task<TaxonomyOptions> GetTaxonomyOptionsAsync(CancellationToken cancellationToken)
@@ -149,46 +145,32 @@ public sealed class BirdDataService
 
         var client = _httpClientFactory.CreateClient("inat");
         using var response = await client.GetAsync($"v1/taxa/{id}?locale=nl&all_names=true", cancellationToken);
-        if (!response.IsSuccessStatusCode) return null;
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        response.EnsureSuccessStatusCode();
 
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        if (!TryGetArray(document.RootElement, "results", out var results)) return null;
-        var first = results.EnumerateArray().FirstOrDefault();
-        if (first.ValueKind == JsonValueKind.Undefined) return null;
+        if (!TryGetArray(document.RootElement, "results", out var results))
+            throw new JsonException("iNaturalist taxon response omitted results.");
 
-        var taxon = ParseInatTaxon(first);
-        if (taxon is not null) _cache.Set($"inat:{id}", taxon, TaxonCacheDuration);
+        var records = results.EnumerateArray().ToList();
+        if (records.Count == 0) return null;
+        if (records.Count != 1)
+            throw new JsonException($"iNaturalist returned {records.Count} records for taxon {id}.");
+
+        var taxon = ParseInatTaxon(records[0]);
+        if (taxon.Id != id)
+            throw new JsonException($"iNaturalist returned taxon {taxon.Id} while {id} was requested.");
+
+        _cache.Set($"inat:{id}", taxon, TaxonCacheDuration);
         return taxon;
     }
 
     private async Task<GbifMatch> GetGbifMatchAsync(string scientificName, CancellationToken cancellationToken)
     {
-        var cacheKey = $"gbif-match:{scientificName.ToLowerInvariant()}";
-        if (_cache.TryGetValue<GbifMatch>(cacheKey, out var cached)) return cached;
-
         try
         {
-            var client = _httpClientFactory.CreateClient("gbif");
-            using var response = await client.GetAsync(
-                $"v1/species/match?name={Uri.EscapeDataString(scientificName)}&strict=false",
-                cancellationToken);
-            if (!response.IsSuccessStatusCode) return EmptyGbifMatch(scientificName);
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var root = document.RootElement;
-            var match = new GbifMatch(
-                GetLong(root, "usageKey"),
-                GetString(root, "kingdom"),
-                GetString(root, "phylum"),
-                GetString(root, "class"),
-                GetString(root, "order"),
-                GetString(root, "family"),
-                GetString(root, "genus"),
-                GetString(root, "species"));
-            _cache.Set(cacheKey, match, GbifCacheDuration);
-            return match;
+            return await GetGbifMatchStrictAsync(scientificName, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -200,6 +182,26 @@ public sealed class BirdDataService
             _logger.LogWarning(exception, "GBIF match failed for {ScientificName}", scientificName);
             return EmptyGbifMatch(scientificName);
         }
+    }
+
+    private async Task<GbifMatch> GetGbifMatchStrictAsync(
+        string scientificName,
+        CancellationToken cancellationToken)
+    {
+        var cacheKey = $"gbif-match:{scientificName.ToLowerInvariant()}";
+        if (_cache.TryGetValue<GbifMatch>(cacheKey, out var cached)) return cached;
+
+        var client = _httpClientFactory.CreateClient("gbif");
+        using var response = await client.GetAsync(
+            $"v1/species/match?name={Uri.EscapeDataString(scientificName)}&strict=false",
+            cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var match = ParseGbifMatch(document.RootElement, scientificName);
+        _cache.Set(cacheKey, match, GbifCacheDuration);
+        return match;
     }
 
     private async Task<IReadOnlyList<string>> GetContinentsAsync(long gbifKey, CancellationToken cancellationToken)
@@ -362,12 +364,17 @@ public sealed class BirdDataService
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
                 total = GetLong(document.RootElement, "total_results")
                     ?? throw new JsonException($"iNaturalist response for rank {rank} omitted total_results.");
+                if (total < 0)
+                    throw new JsonException($"iNaturalist response for rank {rank} contained a negative total_results value.");
                 if (!TryGetArray(document.RootElement, "results", out var results))
                     throw new JsonException($"iNaturalist response for rank {rank} omitted results.");
 
                 var pageCount = 0;
                 foreach (var result in results.EnumerateArray())
                 {
+                    if (result.ValueKind != JsonValueKind.Object)
+                        throw new JsonException($"iNaturalist taxonomy response for rank {rank} contained a non-object record.");
+
                     pageCount += 1;
                     var name = GetString(result, "name");
                     if (name.Length == 0)
@@ -379,6 +386,8 @@ public sealed class BirdDataService
                     throw new InvalidOperationException($"iNaturalist taxonomy pagination stopped early for rank {rank}.");
 
                 processed += pageCount;
+                if (processed > total)
+                    throw new InvalidOperationException($"iNaturalist taxonomy pagination exceeded total_results for rank {rank}.");
                 page += 1;
             }
 
@@ -396,11 +405,16 @@ public sealed class BirdDataService
         }
     }
 
-    private static InatTaxon? ParseInatTaxon(JsonElement element)
+    private static InatTaxon ParseInatTaxon(JsonElement element)
     {
-        var id = GetLong(element, "id");
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("iNaturalist taxon response contained a non-object record.");
+
+        var id = GetLong(element, "id")
+            ?? throw new JsonException("iNaturalist taxon record omitted id.");
         var scientificName = GetString(element, "name");
-        if (id is null || scientificName.Length == 0) return null;
+        if (scientificName.Length == 0)
+            throw new JsonException($"iNaturalist taxon record {id} omitted scientific name.");
 
         var preferred = GetString(element, "preferred_common_name");
         var dutch = GetLocalizedName(element, "nl", "Dutch");
@@ -426,7 +440,7 @@ public sealed class BirdDataService
         }
 
         return new InatTaxon(
-            id.Value,
+            id,
             scientificName,
             commonName,
             english,
@@ -438,11 +452,41 @@ public sealed class BirdDataService
             NullIfEmpty(GetString(element, "wikipedia_url")));
     }
 
+    private static GbifMatch ParseGbifMatch(JsonElement root, string scientificName)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            throw new JsonException("GBIF species-match response was not an object.");
+
+        var matchType = GetString(root, "matchType");
+        if (matchType.Length == 0)
+            throw new JsonException("GBIF species-match response omitted matchType.");
+        if (matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase))
+            return EmptyGbifMatch(scientificName);
+
+        var usageKey = GetLong(root, "usageKey")
+            ?? throw new JsonException("GBIF species-match response omitted usageKey for a matched taxon.");
+        return new GbifMatch(
+            usageKey,
+            GetString(root, "kingdom"),
+            GetString(root, "phylum"),
+            GetString(root, "class"),
+            GetString(root, "order"),
+            GetString(root, "family"),
+            GetString(root, "genus"),
+            GetString(root, "species"));
+    }
+
     private static string GetLocalizedName(JsonElement element, string locale, string lexicon)
     {
-        if (!TryGetArray(element, "names", out var names)) return string.Empty;
+        if (!element.TryGetProperty("names", out var names)) return string.Empty;
+        if (names.ValueKind != JsonValueKind.Array)
+            throw new JsonException("iNaturalist taxon property names was not an array.");
+
         foreach (var name in names.EnumerateArray())
         {
+            if (name.ValueKind != JsonValueKind.Object)
+                throw new JsonException("iNaturalist taxon names contained a non-object record.");
+
             var nameLocale = GetString(name, "locale");
             var nameLexicon = GetString(name, "lexicon");
             if (nameLocale.Equals(locale, StringComparison.OrdinalIgnoreCase)
