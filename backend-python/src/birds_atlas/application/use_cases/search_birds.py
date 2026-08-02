@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from birds_atlas.application.ports.bird_catalog import BirdCatalogPort
 from birds_atlas.application.ports.cache import CachePort
@@ -26,6 +26,16 @@ class SearchBirds:
     enrichment_parallelism: int = 8
     occurrence_parallelism: int = 12
     max_continent_source_scan: int = 500
+    _enrichment_gate: asyncio.Semaphore = field(init=False, repr=False)
+    _occurrence_gate: asyncio.Semaphore = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.enrichment_parallelism < 1:
+            raise ValueError("enrichment_parallelism must be positive")
+        if self.occurrence_parallelism < 1:
+            raise ValueError("occurrence_parallelism must be positive")
+        self._enrichment_gate = asyncio.Semaphore(self.enrichment_parallelism)
+        self._occurrence_gate = asyncio.Semaphore(self.occurrence_parallelism)
 
     async def execute(self, query: BirdSearchQuery) -> BirdSearchResult:
         taxon_id = await self._resolve_taxonomy(query)
@@ -163,13 +173,41 @@ class SearchBirds:
         self, query: BirdSearchQuery, taxon_id: int
     ) -> tuple[list[BirdSummary], bool]:
         assert query.continent is not None
+        if query.sort.value == "name":
+            return await self._name_ordered_continent_matches(query, taxon_id)
+        return await self._observation_ordered_continent_matches(query, taxon_id)
+
+    async def _name_ordered_continent_matches(
+        self, query: BirdSearchQuery, taxon_id: int
+    ) -> tuple[list[BirdSummary], bool]:
+        assert query.continent is not None
+        needed = query.offset + query.page_size + 1
+        ordered = await self._all_name_ordered(query.query, taxon_id)
+        scan_limit = min(len(ordered), self.max_continent_source_scan)
+        matches: list[BirdSummary] = []
+        scanned = 0
+
+        while len(matches) < needed and scanned < scan_limit:
+            chunk_end = min(scanned + 100, scan_limit)
+            chunk = ordered[scanned:chunk_end]
+            scanned = chunk_end
+            enriched = await self._enrich(chunk)
+            matches.extend(
+                await self._filter_continent(enriched, query.continent.value)
+            )
+
+        return matches, scanned >= len(ordered)
+
+    async def _observation_ordered_continent_matches(
+        self, query: BirdSearchQuery, taxon_id: int
+    ) -> tuple[list[BirdSummary], bool]:
+        assert query.continent is not None
         needed = query.offset + query.page_size + 1
         matches: list[BirdSummary] = []
         scanned = 0
         page_number = 1
         total: int | None = None
         seen: set[int] = set()
-        order_by = "id" if query.sort.value == "name" else "observations_count"
 
         while len(matches) < needed and scanned < self.max_continent_source_scan:
             source = await self.catalog.search_page(
@@ -180,7 +218,7 @@ class SearchBirds:
                     self.max_continent_source_scan - scanned,
                 ),
                 taxon_id=taxon_id,
-                order_by=order_by,
+                order_by="observations_count",
             )
             total = source.total if total is None else total
             if source.total != total:
@@ -200,28 +238,16 @@ class SearchBirds:
             scanned += len(source.items)
             enriched = await self._enrich(source.items)
             matches.extend(
-                await self._filter_continent(
-                    enriched,
-                    query.continent.value,
-                )
+                await self._filter_continent(enriched, query.continent.value)
             )
             page_number += 1
 
-        if query.sort.value == "name":
-            matches.sort(
-                key=lambda item: (
-                    (item.common_name or item.english_name or item.scientific_name).casefold(),
-                    item.scientific_name.casefold(),
-                )
-            )
         exhausted = total is not None and scanned >= total
         return matches, exhausted
 
     async def _enrich(self, birds: tuple[Bird, ...]) -> list[BirdSummary]:
-        semaphore = asyncio.Semaphore(self.enrichment_parallelism)
-
         async def enrich_one(bird: Bird) -> BirdSummary:
-            async with semaphore:
+            async with self._enrichment_gate:
                 taxonomy = await self.taxonomy.match_species(
                     bird.scientific_name,
                     required=False,
@@ -235,12 +261,10 @@ class SearchBirds:
         birds: list[BirdSummary],
         continent: str,
     ) -> list[BirdSummary]:
-        semaphore = asyncio.Semaphore(self.occurrence_parallelism)
-
         async def check(bird: BirdSummary) -> bool:
             if bird.gbif_key is None:
                 return False
-            async with semaphore:
+            async with self._occurrence_gate:
                 return await self.taxonomy.has_occurrence(
                     bird.gbif_key,
                     continent,
