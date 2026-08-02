@@ -168,6 +168,7 @@ class SearchBirds:
     async def _continent_matches(
         self, query: BirdSearchQuery, taxon_id: int
     ) -> tuple[list[BirdSummary], bool]:
+        assert query.continent is not None
         needed = query.offset + query.page_size + 1
         matches: list[BirdSummary] = []
         scanned = 0
