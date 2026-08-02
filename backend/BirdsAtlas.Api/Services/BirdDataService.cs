@@ -374,10 +374,15 @@ public sealed class BirdDataService
             ?? _configuration["XenoCanto:ApiKey"];
         if (string.IsNullOrWhiteSpace(apiKey)) return Array.Empty<AudioRecording>();
 
+        var nameParts = scientificName.Split(
+            ' ',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (nameParts.Length < 2) return Array.Empty<AudioRecording>();
+
         try
         {
             var client = _httpClientFactory.CreateClient("xeno");
-            var search = Uri.EscapeDataString($"sp:\"{scientificName}\"");
+            var search = Uri.EscapeDataString($"gen:{nameParts[0]} sp:{nameParts[1]}");
             using var response = await client.GetAsync(
                 $"api/3/recordings?query={search}&key={Uri.EscapeDataString(apiKey)}",
                 cancellationToken);
@@ -708,11 +713,37 @@ public sealed class BirdDataService
 
     private static DateTimeOffset? GetDate(JsonElement element, string propertyName)
     {
-        var value = GetString(element, propertyName);
-        if (value.Length == 0) return null;
-        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
-            throw new JsonException($"JSON property {propertyName} was not a valid date.");
-        return date;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("JSON parent value was not an object.");
+        if (!element.TryGetProperty(propertyName, out var value)
+            || value.ValueKind == JsonValueKind.Null
+            || value.ValueKind != JsonValueKind.String)
+        {
+            return null;
+        }
+
+        var text = value.GetString()?.Trim();
+        if (string.IsNullOrEmpty(text) || text.Contains('/', StringComparison.Ordinal))
+            return null;
+
+        if (DateOnly.TryParseExact(
+                text,
+                "yyyy-MM-dd",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var dateOnly))
+        {
+            return new DateTimeOffset(dateOnly.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+        }
+
+        if (text.Length <= 10 || text[10] != 'T') return null;
+        return DateTimeOffset.TryParse(
+            text,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var date)
+            ? date
+            : null;
     }
 
     private static bool IsWikipediaUri(Uri uri)
