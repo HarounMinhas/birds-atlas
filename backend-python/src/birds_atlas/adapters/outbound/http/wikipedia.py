@@ -14,9 +14,7 @@ class WikipediaHttpAdapter:
     def __init__(self, client: AsyncHttpClient) -> None:
         self._client = client
 
-    async def summary(
-        self, wikipedia_url: str | None, scientific_name: str
-    ) -> EncyclopediaEntry:
+    async def summary(self, wikipedia_url: str | None, scientific_name: str) -> EncyclopediaEntry:
         candidates: list[str] = []
         fallback: str | None = None
         if wikipedia_url and self._safe_wikipedia_url(wikipedia_url):
@@ -40,12 +38,8 @@ class WikipediaHttpAdapter:
                 page_url = candidate
                 content_urls = root.get("content_urls")
                 if content_urls is not None:
-                    urls = object_value(
-                        content_urls, self.provider, "content_urls"
-                    )
-                    desktop = object_value(
-                        urls.get("desktop"), self.provider, "desktop"
-                    )
+                    urls = object_value(content_urls, self.provider, "content_urls")
+                    desktop = object_value(urls.get("desktop"), self.provider, "desktop")
                     returned = string_value(desktop, "page", self.provider)
                     if returned:
                         if not self._safe_wikipedia_url(returned):

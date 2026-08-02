@@ -23,9 +23,7 @@ class GbifHttpAdapter:
         self._client = client
         self._cache = cache
 
-    async def match_species(
-        self, scientific_name: str, *, required: bool
-    ) -> GbifTaxonomy:
+    async def match_species(self, scientific_name: str, *, required: bool) -> GbifTaxonomy:
         key = f"gbif-match:{scientific_name.casefold()}"
         cached = await self._cache.get(key)
         if isinstance(cached, GbifTaxonomy):
@@ -46,9 +44,7 @@ class GbifHttpAdapter:
     async def continents(self, gbif_key: int) -> tuple[str, ...]:
         key = f"gbif-continents:{gbif_key}"
         cached = await self._cache.get(key)
-        if isinstance(cached, tuple) and all(
-            isinstance(item, str) for item in cached
-        ):
+        if isinstance(cached, tuple) and all(isinstance(item, str) for item in cached):
             return cached
         try:
             payload = await self._client.get_json(
@@ -70,31 +66,18 @@ class GbifHttpAdapter:
             found = False
             for raw_facet in facets:
                 facet = object_value(raw_facet, self.provider, "facet")
-                if (
-                    string_value(facet, "field", self.provider).upper()
-                    != "CONTINENT"
-                ):
+                if string_value(facet, "field", self.provider).upper() != "CONTINENT":
                     continue
                 found = True
-                counts = list_value(
-                    facet.get("counts"), self.provider, "counts"
-                )
+                counts = list_value(facet.get("counts"), self.provider, "counts")
                 for raw_count in counts:
-                    facet_count = object_value(
-                        raw_count, self.provider, "facet count"
-                    )
-                    name = string_value(
-                        facet_count, "name", self.provider, required=True
-                    )
-                    value = int_value(
-                        facet_count, "count", self.provider, required=True
-                    )
+                    facet_count = object_value(raw_count, self.provider, "facet count")
+                    name = string_value(facet_count, "name", self.provider, required=True)
+                    value = int_value(facet_count, "count", self.provider, required=True)
                     if value is not None and value > 0:
                         values.add(name)
             if not found:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "continent facet missing"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "continent facet missing")
             result = tuple(sorted(values))
             await self._cache.set(key, result, 64_800)
             return result
@@ -115,24 +98,18 @@ class GbifHttpAdapter:
                     "limit": 0,
                 },
             )
-            root = object_value(
-                payload, self.provider, "occurrence count response"
-            )
+            root = object_value(payload, self.provider, "occurrence count response")
             count = int_value(root, "count", self.provider, required=True)
             assert count is not None
             if count < 0:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "occurrence count was negative"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "occurrence count was negative")
             found = count > 0
             await self._cache.set(key, found, 64_800)
             return found
         except UpstreamError:
             return False
 
-    async def occurrences(
-        self, gbif_key: int, limit: int
-    ) -> tuple[OccurrencePoint, ...]:
+    async def occurrences(self, gbif_key: int, limit: int) -> tuple[OccurrencePoint, ...]:
         payload = await self._client.get_json(
             "v1/occurrence/search",
             params={
@@ -152,14 +129,10 @@ class GbifHttpAdapter:
             if latitude is None or longitude is None:
                 continue
             if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "invalid occurrence coordinates"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "invalid occurrence coordinates")
             occurrence_key = int_value(record, "key", self.provider) or 0
             if occurrence_key > 0 and occurrence_key in seen:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "duplicate occurrence key"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "duplicate occurrence key")
             if occurrence_key > 0:
                 seen.add(occurrence_key)
             points.append(
@@ -181,9 +154,7 @@ class GbifHttpAdapter:
 
     def _parse_match(self, payload: Any, scientific_name: str) -> GbifTaxonomy:
         root = object_value(payload, self.provider, "species-match response")
-        match_type = string_value(
-            root, "matchType", self.provider, required=True
-        ).upper()
+        match_type = string_value(root, "matchType", self.provider, required=True).upper()
         if match_type == "NONE":
             return self._empty(scientific_name)
         rank = string_value(root, "rank", self.provider, required=True).upper()
@@ -198,9 +169,7 @@ class GbifHttpAdapter:
             order=string_value(root, "order", self.provider),
             family=string_value(root, "family", self.provider),
             genus=string_value(root, "genus", self.provider),
-            species=(
-                string_value(root, "species", self.provider) or scientific_name
-            ),
+            species=(string_value(root, "species", self.provider) or scientific_name),
         )
 
     @staticmethod
@@ -225,9 +194,7 @@ class GbifHttpAdapter:
             if len(text) == 10:
                 return datetime.fromisoformat(text).replace(tzinfo=UTC)
             if len(text) > 10 and text[10] == "T":
-                return datetime.fromisoformat(
-                    text.replace("Z", "+00:00")
-                ).astimezone(UTC)
+                return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(UTC)
         except ValueError:
             return None
         return None

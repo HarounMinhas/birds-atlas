@@ -49,25 +49,13 @@ class Settings:
     def from_environment(cls) -> Settings:
         key = os.getenv("XENO_CANTO_API_KEY", "").strip()
         return cls(
-            inaturalist_base_url=_base_url(
-                "INATURALIST_BASE_URL", "https://api.inaturalist.org/"
-            ),
+            inaturalist_base_url=_base_url("INATURALIST_BASE_URL", "https://api.inaturalist.org/"),
             gbif_base_url=_base_url("GBIF_BASE_URL", "https://api.gbif.org/"),
-            wikipedia_base_url=_base_url(
-                "WIKIPEDIA_BASE_URL", "https://en.wikipedia.org/"
-            ),
-            xeno_canto_base_url=_base_url(
-                "XENO_CANTO_BASE_URL", "https://xeno-canto.org/"
-            ),
+            wikipedia_base_url=_base_url("WIKIPEDIA_BASE_URL", "https://en.wikipedia.org/"),
+            xeno_canto_base_url=_base_url("XENO_CANTO_BASE_URL", "https://xeno-canto.org/"),
             xeno_canto_api_key=key or None,
-            http_connect_timeout_seconds=_positive_float(
-                "HTTP_CONNECT_TIMEOUT_SECONDS", 5.0
-            ),
-            http_read_timeout_seconds=_positive_float(
-                "HTTP_READ_TIMEOUT_SECONDS", 20.0
-            ),
-            cache_default_ttl_seconds=_positive_int(
-                "CACHE_DEFAULT_TTL_SECONDS", 1800
-            ),
+            http_connect_timeout_seconds=_positive_float("HTTP_CONNECT_TIMEOUT_SECONDS", 5.0),
+            http_read_timeout_seconds=_positive_float("HTTP_READ_TIMEOUT_SECONDS", 20.0),
+            cache_default_ttl_seconds=_positive_int("CACHE_DEFAULT_TTL_SECONDS", 1800),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper(),
         )

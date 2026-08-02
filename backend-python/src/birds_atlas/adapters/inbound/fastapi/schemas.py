@@ -140,9 +140,7 @@ class BirdDetailDto(BirdSummaryDto):
             gbif_url=value.gbif_url,
             continents=list(value.continents),
             taxonomy=BirdTaxonomyDto.from_domain(value.taxonomy),
-            recordings=[
-                AudioRecordingDto.from_domain(item) for item in value.recordings
-            ],
+            recordings=[AudioRecordingDto.from_domain(item) for item in value.recordings],
         )
 
 

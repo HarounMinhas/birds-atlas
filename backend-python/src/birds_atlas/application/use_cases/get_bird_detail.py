@@ -25,13 +25,9 @@ class GetBirdDetail:
             raise BirdNotFoundError("Bird taxon not found.")
 
         gbif = await self.taxonomy.match_species(bird.scientific_name, required=False)
-        encyclopedia_task = self.encyclopedia.summary(
-            bird.wikipedia_url, bird.scientific_name
-        )
+        encyclopedia_task = self.encyclopedia.summary(bird.wikipedia_url, bird.scientific_name)
         continent_task = (
-            self.taxonomy.continents(gbif.usage_key)
-            if gbif.usage_key
-            else _empty_strings()
+            self.taxonomy.continents(gbif.usage_key) if gbif.usage_key else _empty_strings()
         )
         recordings_task = self.recordings.recordings(bird.scientific_name)
         entry, continents, recordings = await asyncio.gather(
@@ -55,11 +51,7 @@ class GetBirdDetail:
             wikipedia_summary=entry.summary,
             wikipedia_url=entry.url,
             inaturalist_url=f"https://www.inaturalist.org/taxa/{bird.id}",
-            gbif_url=(
-                f"https://www.gbif.org/species/{gbif.usage_key}"
-                if gbif.usage_key
-                else None
-            ),
+            gbif_url=(f"https://www.gbif.org/species/{gbif.usage_key}" if gbif.usage_key else None),
             continents=continents,
             taxonomy=BirdTaxonomy(
                 kingdom=gbif.kingdom,

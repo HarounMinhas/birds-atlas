@@ -7,9 +7,7 @@ from birds_atlas.adapters.inbound.fastapi.schemas import (
 
 
 def test_contract_aliases_match_angular_models() -> None:
-    list_properties = BirdListResponseDto.model_json_schema(by_alias=True)[
-        "properties"
-    ]
+    list_properties = BirdListResponseDto.model_json_schema(by_alias=True)["properties"]
     assert set(list_properties) == {
         "page",
         "pageSize",
@@ -27,9 +25,7 @@ def test_contract_aliases_match_angular_models() -> None:
         "taxonomy",
         "recordings",
     } <= detail
-    occurrence = set(
-        OccurrencePointDto.model_json_schema(by_alias=True)["properties"]
-    )
+    occurrence = set(OccurrencePointDto.model_json_schema(by_alias=True)["properties"])
     assert occurrence == {
         "key",
         "latitude",

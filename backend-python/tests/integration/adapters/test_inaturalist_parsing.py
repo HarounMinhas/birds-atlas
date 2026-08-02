@@ -26,9 +26,7 @@ async def test_inaturalist_parses_missing_photo_as_none() -> None:
             }
         ],
     }
-    adapter = INaturalistHttpAdapter(
-        StubHttp(payload), InMemoryTtlCacheAdapter()
-    )
+    adapter = INaturalistHttpAdapter(StubHttp(payload), InMemoryTtlCacheAdapter())
     page = await adapter.search_page(
         query="",
         page=1,
@@ -51,9 +49,7 @@ async def test_inaturalist_rejects_wrong_type() -> None:
             }
         ],
     }
-    adapter = INaturalistHttpAdapter(
-        StubHttp(payload), InMemoryTtlCacheAdapter()
-    )
+    adapter = INaturalistHttpAdapter(StubHttp(payload), InMemoryTtlCacheAdapter())
     with pytest.raises(UpstreamInvalidResponseError):
         await adapter.search_page(
             query="",

@@ -17,9 +17,7 @@ def list_value(value: Any, provider: str, context: str) -> list[Any]:
     return value
 
 
-def string_value(
-    obj: dict[str, Any], key: str, provider: str, *, required: bool = False
-) -> str:
+def string_value(obj: dict[str, Any], key: str, provider: str, *, required: bool = False) -> str:
     value = obj.get(key)
     if value is None:
         if required:
@@ -48,9 +46,7 @@ def int_value(
         try:
             return int(value)
         except ValueError as exc:
-            raise UpstreamInvalidResponseError(
-                provider, f"{key} was not an integer"
-            ) from exc
+            raise UpstreamInvalidResponseError(provider, f"{key} was not an integer") from exc
     raise UpstreamInvalidResponseError(provider, f"{key} was not an integer")
 
 
@@ -64,7 +60,5 @@ def float_value(obj: dict[str, Any], key: str, provider: str) -> float | None:
         try:
             return float(value)
         except ValueError as exc:
-            raise UpstreamInvalidResponseError(
-                provider, f"{key} was not numeric"
-            ) from exc
+            raise UpstreamInvalidResponseError(provider, f"{key} was not numeric") from exc
     raise UpstreamInvalidResponseError(provider, f"{key} was not numeric")

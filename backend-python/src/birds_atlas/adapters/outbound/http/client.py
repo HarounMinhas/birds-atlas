@@ -41,9 +41,7 @@ class AsyncHttpClient:
             timeout=timeout,
             follow_redirects=follow_redirects,
             headers={
-                "User-Agent": (
-                    "BirdsAtlas/2.0 (+https://github.com/HarounMinhas/birds-atlas)"
-                )
+                "User-Agent": ("BirdsAtlas/2.0 (+https://github.com/HarounMinhas/birds-atlas)")
             },
             limits=httpx.Limits(max_connections=24, max_keepalive_connections=12),
         )
@@ -60,13 +58,9 @@ class AsyncHttpClient:
                 response = await self.client.get(path, params=params)
         except (TimeoutError, httpx.TimeoutException) as exc:
             logger.warning("upstream_timeout provider=%s path=%s", self.provider, path)
-            raise UpstreamTimeoutError(
-                self.provider, f"{self.provider} timed out"
-            ) from exc
+            raise UpstreamTimeoutError(self.provider, f"{self.provider} timed out") from exc
         except httpx.RequestError as exc:
-            logger.warning(
-                "upstream_request_error provider=%s path=%s", self.provider, path
-            )
+            logger.warning("upstream_request_error provider=%s path=%s", self.provider, path)
             raise UpstreamUnavailableError(
                 self.provider, f"{self.provider} request failed"
             ) from exc

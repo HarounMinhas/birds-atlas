@@ -15,9 +15,7 @@ class GetBirdOccurrences:
 
     async def execute(self, bird_id: int, limit: int) -> tuple[OccurrencePoint, ...]:
         if not 1 <= limit <= MAX_OCCURRENCE_LIMIT:
-            raise DomainValidationError(
-                f"limit must be between 1 and {MAX_OCCURRENCE_LIMIT}"
-            )
+            raise DomainValidationError(f"limit must be between 1 and {MAX_OCCURRENCE_LIMIT}")
         bird = await self.catalog.get_bird(bird_id)
         if bird is None or not bird.is_active_bird_species():
             raise BirdNotFoundError("Bird taxon not found.")

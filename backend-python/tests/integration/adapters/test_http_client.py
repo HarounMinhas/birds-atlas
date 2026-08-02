@@ -40,9 +40,7 @@ async def test_status_translation(status, exception) -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_json_translation() -> None:
-    client, old = adapter(
-        lambda request: httpx.Response(200, content=b"not-json")
-    )
+    client, old = adapter(lambda request: httpx.Response(200, content=b"not-json"))
     await old.aclose()
     with pytest.raises(UpstreamInvalidResponseError):
         await client.get_json("resource")

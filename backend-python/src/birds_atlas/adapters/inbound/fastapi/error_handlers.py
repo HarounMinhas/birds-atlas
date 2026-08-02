@@ -23,9 +23,7 @@ def register_error_handlers(app: FastAPI) -> None:
     async def rate_limit(_: Request, exc: UpstreamRateLimitError) -> JSONResponse:
         return JSONResponse(
             status_code=503,
-            content={
-                "message": f"External data source {exc.provider} is rate-limited."
-            },
+            content={"message": f"External data source {exc.provider} is rate-limited."},
             headers={"Retry-After": "60"},
         )
 
@@ -33,9 +31,7 @@ def register_error_handlers(app: FastAPI) -> None:
     async def timeout(_: Request, exc: UpstreamTimeoutError) -> JSONResponse:
         return JSONResponse(
             status_code=504,
-            content={
-                "message": f"External data source {exc.provider} timed out."
-            },
+            content={"message": f"External data source {exc.provider} timed out."},
         )
 
     @app.exception_handler(UpstreamError)

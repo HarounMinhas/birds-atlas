@@ -49,9 +49,7 @@ class INaturalistHttpAdapter:
         total = int_value(root, "total_results", self.provider, required=True)
         assert total is not None
         if total < 0:
-            raise UpstreamInvalidResponseError(
-                self.provider, "total_results was negative"
-            )
+            raise UpstreamInvalidResponseError(self.provider, "total_results was negative")
         records = list_value(root.get("results"), self.provider, "results")
         birds = tuple(self._parse_bird(item) for item in records)
         if len({bird.id for bird in birds}) != len(birds):
@@ -79,20 +77,14 @@ class INaturalistHttpAdapter:
         if not records:
             return None
         if len(records) != 1:
-            raise UpstreamInvalidResponseError(
-                self.provider, "taxon response was not singular"
-            )
+            raise UpstreamInvalidResponseError(self.provider, "taxon response was not singular")
         bird = self._parse_bird(records[0], include_identity=True)
         if bird.id != bird_id:
-            raise UpstreamInvalidResponseError(
-                self.provider, "taxon ID did not match request"
-            )
+            raise UpstreamInvalidResponseError(self.provider, "taxon ID did not match request")
         await self._cache.set(key, bird, 43_200)
         return bird
 
-    async def resolve_taxon(
-        self, *, rank: str, name: str
-    ) -> ResolvedTaxon | None:
+    async def resolve_taxon(self, *, rank: str, name: str) -> ResolvedTaxon | None:
         key = f"bird-filter:{rank}:{name.casefold()}"
         cached = await self._cache.get(key)
         if isinstance(cached, ResolvedTaxon):
@@ -120,44 +112,27 @@ class INaturalistHttpAdapter:
             assert total is not None
             expected_total = total if expected_total is None else expected_total
             if total != expected_total:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "filter total changed"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "filter total changed")
             records = list_value(root.get("results"), self.provider, "results")
             if not records and len(seen) < expected_total:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "filter pagination stopped early"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "filter pagination stopped early")
             for raw in records:
                 record = object_value(raw, self.provider, "filter record")
                 taxon_id = int_value(record, "id", self.provider, required=True)
                 assert taxon_id is not None
                 if taxon_id in seen:
-                    raise UpstreamInvalidResponseError(
-                        self.provider, "duplicate filter taxon"
-                    )
+                    raise UpstreamInvalidResponseError(self.provider, "duplicate filter taxon")
                 seen.add(taxon_id)
-                result_name = string_value(
-                    record, "name", self.provider, required=True
-                )
-                result_rank = string_value(
-                    record, "rank", self.provider, required=True
-                )
-                if (
-                    result_name.casefold() == name.casefold()
-                    and result_rank.casefold() == rank
-                ):
-                    resolved = ResolvedTaxon(
-                        taxon_id, result_rank, self._ancestor_ids(record)
-                    )
+                result_name = string_value(record, "name", self.provider, required=True)
+                result_rank = string_value(record, "rank", self.provider, required=True)
+                if result_name.casefold() == name.casefold() and result_rank.casefold() == rank:
+                    resolved = ResolvedTaxon(taxon_id, result_rank, self._ancestor_ids(record))
                     await self._cache.set(key, resolved, 43_200)
                     return resolved
             page += 1
         return None
 
-    async def taxonomy_names(
-        self, *, rank: str, page_size: int
-    ) -> tuple[str, ...]:
+    async def taxonomy_names(self, *, rank: str, page_size: int) -> tuple[str, ...]:
         names: set[str] = set()
         seen: set[int] = set()
         expected_total: int | None = None
@@ -181,9 +156,7 @@ class INaturalistHttpAdapter:
             assert total is not None
             expected_total = total if expected_total is None else expected_total
             if total != expected_total:
-                raise UpstreamInvalidResponseError(
-                    self.provider, "taxonomy total changed"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "taxonomy total changed")
             records = list_value(root.get("results"), self.provider, "results")
             if not records and len(seen) < expected_total:
                 raise UpstreamInvalidResponseError(
@@ -194,38 +167,24 @@ class INaturalistHttpAdapter:
                 taxon_id = int_value(record, "id", self.provider, required=True)
                 assert taxon_id is not None
                 if taxon_id in seen:
-                    raise UpstreamInvalidResponseError(
-                        self.provider, "duplicate taxonomy taxon"
-                    )
+                    raise UpstreamInvalidResponseError(self.provider, "duplicate taxonomy taxon")
                 seen.add(taxon_id)
-                result_rank = string_value(
-                    record, "rank", self.provider, required=True
-                )
+                result_rank = string_value(record, "rank", self.provider, required=True)
                 if result_rank.casefold() != rank:
-                    raise UpstreamInvalidResponseError(
-                        self.provider, "taxonomy rank mismatch"
-                    )
-                names.add(
-                    string_value(record, "name", self.provider, required=True)
-                )
+                    raise UpstreamInvalidResponseError(self.provider, "taxonomy rank mismatch")
+                names.add(string_value(record, "name", self.provider, required=True))
             page += 1
         if expected_total is None or len(seen) != expected_total:
-            raise UpstreamInvalidResponseError(
-                self.provider, "taxonomy pagination incomplete"
-            )
+            raise UpstreamInvalidResponseError(self.provider, "taxonomy pagination incomplete")
         return tuple(sorted(names, key=str.casefold))
 
     def _parse_bird(self, value: Any, *, include_identity: bool = False) -> Bird:
         record = object_value(value, self.provider, "taxon record")
         bird_id = int_value(record, "id", self.provider, required=True)
-        observations = int_value(
-            record, "observations_count", self.provider, required=True
-        )
+        observations = int_value(record, "observations_count", self.provider, required=True)
         assert bird_id is not None and observations is not None
         if observations < 0:
-            raise UpstreamInvalidResponseError(
-                self.provider, "negative observations_count"
-            )
+            raise UpstreamInvalidResponseError(self.provider, "negative observations_count")
         scientific = string_value(record, "name", self.provider, required=True)
         preferred = string_value(record, "preferred_common_name", self.provider)
         dutch = self._localized_name(record, "nl", "Dutch")
@@ -235,20 +194,14 @@ class INaturalistHttpAdapter:
         if photo is not None:
             photo_obj = object_value(photo, self.provider, "default_photo")
             image = string_value(photo_obj, "medium_url", self.provider) or None
-            attribution = (
-                string_value(photo_obj, "attribution", self.provider) or None
-            )
-            license_code = (
-                string_value(photo_obj, "license_code", self.provider) or None
-            )
+            attribution = string_value(photo_obj, "attribution", self.provider) or None
+            license_code = string_value(photo_obj, "license_code", self.provider) or None
         status = "NE"
         conservation = record.get("conservation_status")
         if conservation is not None:
             status = (
                 string_value(
-                    object_value(
-                        conservation, self.provider, "conservation_status"
-                    ),
+                    object_value(conservation, self.provider, "conservation_status"),
                     "status",
                     self.provider,
                 ).upper()
@@ -257,14 +210,8 @@ class INaturalistHttpAdapter:
         rank = string_value(record, "rank", self.provider) or "species"
         is_active_raw = record.get("is_active", True)
         if not isinstance(is_active_raw, bool):
-            raise UpstreamInvalidResponseError(
-                self.provider, "is_active was not boolean"
-            )
-        ancestors = (
-            self._ancestor_ids(record)
-            if include_identity
-            else frozenset({AVES_TAXON_ID})
-        )
+            raise UpstreamInvalidResponseError(self.provider, "is_active was not boolean")
+        ancestors = self._ancestor_ids(record) if include_identity else frozenset({AVES_TAXON_ID})
         return Bird(
             id=bird_id,
             scientific_name=scientific,
@@ -275,27 +222,21 @@ class INaturalistHttpAdapter:
             photo_license=license_code,
             iucn_status=status,
             observation_count=observations,
-            wikipedia_url=(
-                string_value(record, "wikipedia_url", self.provider) or None
-            ),
+            wikipedia_url=(string_value(record, "wikipedia_url", self.provider) or None),
             rank=rank,
             is_active=is_active_raw,
             ancestor_ids=ancestors,
         )
 
-    def _localized_name(
-        self, record: dict[str, Any], locale: str, lexicon: str
-    ) -> str:
+    def _localized_name(self, record: dict[str, Any], locale: str, lexicon: str) -> str:
         raw_names = record.get("names")
         if raw_names is None:
             return ""
         for raw in list_value(raw_names, self.provider, "names"):
             name = object_value(raw, self.provider, "name")
             if (
-                string_value(name, "locale", self.provider).casefold()
-                == locale.casefold()
-                or string_value(name, "lexicon", self.provider).casefold()
-                == lexicon.casefold()
+                string_value(name, "locale", self.provider).casefold() == locale.casefold()
+                or string_value(name, "lexicon", self.provider).casefold() == lexicon.casefold()
             ):
                 return string_value(name, "name", self.provider, required=True)
         return ""
@@ -307,8 +248,6 @@ class INaturalistHttpAdapter:
         result: set[int] = set()
         for value in list_value(raw, self.provider, "ancestor_ids"):
             if not isinstance(value, int) or isinstance(value, bool):
-                raise UpstreamInvalidResponseError(
-                    self.provider, "ancestor_ids was invalid"
-                )
+                raise UpstreamInvalidResponseError(self.provider, "ancestor_ids was invalid")
             result.add(value)
         return frozenset(result)

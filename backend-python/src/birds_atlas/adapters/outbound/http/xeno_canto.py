@@ -19,9 +19,7 @@ class XenoCantoHttpAdapter:
         self._client = client
         self._api_key = api_key
 
-    async def recordings(
-        self, scientific_name: str
-    ) -> tuple[BirdRecording, ...]:
+    async def recordings(self, scientific_name: str) -> tuple[BirdRecording, ...]:
         if not self._api_key:
             return ()
         parts = scientific_name.split()
@@ -43,13 +41,9 @@ class XenoCantoHttpAdapter:
             seen: set[str] = set()
             for raw in list_value(raw_recordings, self.provider, "recordings"):
                 record = object_value(raw, self.provider, "recording")
-                recording_id = string_value(
-                    record, "id", self.provider, required=True
-                )
+                recording_id = string_value(record, "id", self.provider, required=True)
                 if recording_id in seen:
-                    raise UpstreamInvalidResponseError(
-                        self.provider, "duplicate recording ID"
-                    )
+                    raise UpstreamInvalidResponseError(self.provider, "duplicate recording ID")
                 seen.add(recording_id)
                 file_url = string_value(record, "file", self.provider)
                 if not file_url:
@@ -58,9 +52,7 @@ class XenoCantoHttpAdapter:
                     file_url = "https:" + file_url
                 parsed = urlparse(file_url)
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                    raise UpstreamInvalidResponseError(
-                        self.provider, "invalid audio URL"
-                    )
+                    raise UpstreamInvalidResponseError(self.provider, "invalid audio URL")
                 scientific = " ".join(
                     part
                     for part in (

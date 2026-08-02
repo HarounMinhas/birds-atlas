@@ -58,16 +58,12 @@ class FakeCatalog:
     async def get_bird(self, bird_id: int) -> Bird | None:
         return self.bird if bird_id == 1 else None
 
-    async def resolve_taxon(
-        self, *, rank: str, name: str
-    ) -> ResolvedTaxon | None:
+    async def resolve_taxon(self, *, rank: str, name: str) -> ResolvedTaxon | None:
         if name == "Valid":
             return ResolvedTaxon(10, rank, frozenset({AVES_TAXON_ID}))
         return None
 
-    async def taxonomy_names(
-        self, *, rank: str, page_size: int
-    ) -> tuple[str, ...]:
+    async def taxonomy_names(self, *, rank: str, page_size: int) -> tuple[str, ...]:
         return {
             "order": ("Passeriformes",),
             "family": ("Turdidae",),
@@ -76,9 +72,7 @@ class FakeCatalog:
 
 
 class FakeGbif:
-    async def match_species(
-        self, scientific_name: str, *, required: bool
-    ) -> GbifTaxonomy:
+    async def match_species(self, scientific_name: str, *, required: bool) -> GbifTaxonomy:
         return GbifTaxonomy(
             100,
             "Animalia",
@@ -96,9 +90,7 @@ class FakeGbif:
     async def has_occurrence(self, gbif_key: int, continent: str) -> bool:
         return continent == "EUROPE"
 
-    async def occurrences(
-        self, gbif_key: int, limit: int
-    ) -> tuple[OccurrencePoint, ...]:
+    async def occurrences(self, gbif_key: int, limit: int) -> tuple[OccurrencePoint, ...]:
         return (
             OccurrencePoint(
                 7,
@@ -113,9 +105,7 @@ class FakeGbif:
 
 
 class FakeWikipedia:
-    async def summary(
-        self, wikipedia_url: str | None, scientific_name: str
-    ) -> EncyclopediaEntry:
+    async def summary(self, wikipedia_url: str | None, scientific_name: str) -> EncyclopediaEntry:
         return EncyclopediaEntry("Summary", wikipedia_url)
 
 
@@ -136,9 +126,7 @@ def fake_container() -> Container:
     cache = FakeCache()
     return Container(
         search_birds=SearchBirds(catalog, gbif, cache),
-        get_bird_detail=GetBirdDetail(
-            catalog, gbif, FakeWikipedia(), FakeRecordings()
-        ),
+        get_bird_detail=GetBirdDetail(catalog, gbif, FakeWikipedia(), FakeRecordings()),
         get_occurrences=GetBirdOccurrences(catalog, gbif, gbif),
         get_taxonomy_options=GetTaxonomyOptions(catalog, cache),
         check_health=CheckHealth(FakeClock()),

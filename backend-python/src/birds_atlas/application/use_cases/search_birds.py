@@ -107,14 +107,10 @@ class SearchBirds:
         start = query.offset
         return ordered[start : start + query.page_size], len(ordered)
 
-    async def _all_name_ordered(
-        self, search: str, taxon_id: int
-    ) -> tuple[Bird, ...]:
+    async def _all_name_ordered(self, search: str, taxon_id: int) -> tuple[Bird, ...]:
         cache_key = f"bird-name-order:{taxon_id}:{search.casefold()}"
         cached = await self.cache.get(cache_key)
-        if isinstance(cached, tuple) and all(
-            isinstance(item, Bird) for item in cached
-        ):
+        if isinstance(cached, tuple) and all(isinstance(item, Bird) for item in cached):
             return cached
 
         page_number = 1
@@ -129,9 +125,7 @@ class SearchBirds:
                 taxon_id=taxon_id,
                 order_by="id",
             )
-            expected_total = (
-                page.total if expected_total is None else expected_total
-            )
+            expected_total = page.total if expected_total is None else expected_total
             if page.total != expected_total:
                 raise UpstreamInvalidResponseError(
                     "iNaturalist",
@@ -175,14 +169,9 @@ class SearchBirds:
         page_number = 1
         total: int | None = None
         seen: set[int] = set()
-        order_by = (
-            "id" if query.sort.value == "name" else "observations_count"
-        )
+        order_by = "id" if query.sort.value == "name" else "observations_count"
 
-        while (
-            len(matches) < needed
-            and scanned < self.max_continent_source_scan
-        ):
+        while len(matches) < needed and scanned < self.max_continent_source_scan:
             source = await self.catalog.search_page(
                 query=query.query,
                 page=page_number,
@@ -221,11 +210,7 @@ class SearchBirds:
         if query.sort.value == "name":
             matches.sort(
                 key=lambda item: (
-                    (
-                        item.common_name
-                        or item.english_name
-                        or item.scientific_name
-                    ).casefold(),
+                    (item.common_name or item.english_name or item.scientific_name).casefold(),
                     item.scientific_name.casefold(),
                 )
             )
@@ -243,9 +228,7 @@ class SearchBirds:
                 )
                 return to_summary(bird, taxonomy)
 
-        return list(
-            await asyncio.gather(*(enrich_one(bird) for bird in birds))
-        )
+        return list(await asyncio.gather(*(enrich_one(bird) for bird in birds)))
 
     async def _filter_continent(
         self,
@@ -264,8 +247,4 @@ class SearchBirds:
                 )
 
         flags = await asyncio.gather(*(check(bird) for bird in birds))
-        return [
-            bird
-            for bird, found in zip(birds, flags, strict=True)
-            if found
-        ]
+        return [bird for bird, found in zip(birds, flags, strict=True) if found]

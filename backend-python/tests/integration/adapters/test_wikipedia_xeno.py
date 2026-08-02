@@ -19,17 +19,11 @@ async def test_wikipedia_rejects_unsafe_source_and_uses_fallback() -> None:
     http = StubHttp(
         {
             "extract": "A bird",
-            "content_urls": {
-                "desktop": {
-                    "page": "https://en.wikipedia.org/wiki/Turdus_merula"
-                }
-            },
+            "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Turdus_merula"}},
         }
     )
     adapter = WikipediaHttpAdapter(http)
-    result = await adapter.summary(
-        "https://attackerwikipedia.org/wiki/x", "Turdus merula"
-    )
+    result = await adapter.summary("https://attackerwikipedia.org/wiki/x", "Turdus merula")
     assert result.url == "https://en.wikipedia.org/wiki/Turdus_merula"
 
 
