@@ -3,9 +3,20 @@ frontend/node_modules/
 frontend/dist/
 frontend/.angular/
 
-# Backend
+# .NET backend
 backend/**/bin/
 backend/**/obj/
+
+# Python backend
+.venv/
+backend-python/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Editors and OS
 .vscode/
@@ -16,4 +27,7 @@ backend/**/obj/
 
 # Local settings
 .env
+.env.*
+!.env.example
 appsettings.Development.local.json
+.vercel/
