@@ -370,7 +370,9 @@ public sealed class BirdDataService
                 {
                     pageCount += 1;
                     var name = GetString(result, "name");
-                    if (name.Length > 0) names.Add(name);
+                    if (name.Length == 0)
+                        throw new JsonException($"iNaturalist taxonomy record for rank {rank} omitted name.");
+                    names.Add(name);
                 }
 
                 if (pageCount == 0 && processed < total)
