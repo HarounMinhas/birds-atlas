@@ -37,7 +37,7 @@ async def get_bird(
     use_case: GetBirdDetail = Depends(get_bird_detail),
 ) -> BirdDetailDto:
     response.headers["Cache-Control"] = PUBLIC_CACHE
-    return BirdDetailDto.from_domain(await use_case.execute(bird_id))
+    return BirdDetailDto.from_detail(await use_case.execute(bird_id))
 
 
 @router.get("/{bird_id}/occurrences", response_model=list[OccurrencePointDto])
