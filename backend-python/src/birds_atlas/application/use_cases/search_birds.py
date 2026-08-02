@@ -192,9 +192,7 @@ class SearchBirds:
             chunk = ordered[scanned:chunk_end]
             scanned = chunk_end
             enriched = await self._enrich(chunk)
-            matches.extend(
-                await self._filter_continent(enriched, query.continent.value)
-            )
+            matches.extend(await self._filter_continent(enriched, query.continent.value))
 
         return matches, scanned >= len(ordered)
 
@@ -237,9 +235,7 @@ class SearchBirds:
                 seen.add(bird.id)
             scanned += len(source.items)
             enriched = await self._enrich(source.items)
-            matches.extend(
-                await self._filter_continent(enriched, query.continent.value)
-            )
+            matches.extend(await self._filter_continent(enriched, query.continent.value))
             page_number += 1
 
         exhausted = total is not None and scanned >= total
