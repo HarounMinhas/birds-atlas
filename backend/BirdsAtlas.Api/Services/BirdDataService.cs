@@ -85,8 +85,8 @@ public sealed class BirdDataService
         var taxon = await GetInatTaxonAsync(inatId, cancellationToken);
         if (taxon is null) return Array.Empty<OccurrencePoint>();
 
-        // Unlike optional detail enrichment, map data must preserve upstream failures so
-        // the client can distinguish an outage from a genuine zero-result response.
+        // Map data is not optional: upstream failures must remain HTTP errors so the
+        // client can distinguish an outage from a genuine zero-result response.
         var gbif = await GetGbifMatchStrictAsync(taxon.ScientificName, cancellationToken);
         if (gbif.UsageKey is null) return Array.Empty<OccurrencePoint>();
 
@@ -215,22 +215,56 @@ public sealed class BirdDataService
             using var response = await client.GetAsync(
                 $"v1/occurrence/search?taxon_key={gbifKey}&limit=0&facet=continent&facet_limit=20",
                 cancellationToken);
-            if (!response.IsSuccessStatusCode) return Array.Empty<string>();
+            response.EnsureSuccessStatusCode();
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-            var continents = new List<string>();
-            if (TryGetArray(document.RootElement, "facets", out var facets))
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                throw new JsonException("GBIF continent response was not an object.");
+
+            var count = GetLong(document.RootElement, "count")
+                ?? throw new JsonException("GBIF continent response omitted count.");
+            if (count < 0)
+                throw new JsonException("GBIF continent response contained a negative count.");
+            if (count == 0)
             {
-                foreach (var facet in facets.EnumerateArray())
+                var empty = Array.Empty<string>();
+                _cache.Set(cacheKey, empty, TimeSpan.FromHours(18));
+                return empty;
+            }
+
+            if (!TryGetArray(document.RootElement, "facets", out var facets))
+                throw new JsonException("GBIF continent response omitted facets.");
+
+            var continents = new List<string>();
+            var foundContinentFacet = false;
+            foreach (var facet in facets.EnumerateArray())
+            {
+                if (facet.ValueKind != JsonValueKind.Object)
+                    throw new JsonException("GBIF continent response contained a non-object facet.");
+                if (!GetString(facet, "field").Equals("CONTINENT", StringComparison.OrdinalIgnoreCase)) continue;
+
+                foundContinentFacet = true;
+                if (!TryGetArray(facet, "counts", out var counts))
+                    throw new JsonException("GBIF continent facet omitted counts.");
+
+                foreach (var facetCount in counts.EnumerateArray())
                 {
-                    if (!GetString(facet, "field").Equals("CONTINENT", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!TryGetArray(facet, "counts", out var counts)) continue;
-                    continents.AddRange(counts.EnumerateArray()
-                        .Select(count => GetString(count, "name"))
-                        .Where(name => name.Length > 0));
+                    if (facetCount.ValueKind != JsonValueKind.Object)
+                        throw new JsonException("GBIF continent facet contained a non-object count.");
+                    var name = GetString(facetCount, "name");
+                    if (name.Length == 0)
+                        throw new JsonException("GBIF continent facet count omitted name.");
+                    var value = GetLong(facetCount, "count")
+                        ?? throw new JsonException("GBIF continent facet count omitted count.");
+                    if (value < 0)
+                        throw new JsonException("GBIF continent facet contained a negative count.");
+                    if (value > 0) continents.Add(name);
                 }
             }
+
+            if (!foundContinentFacet)
+                throw new JsonException("GBIF continent response omitted the requested continent facet.");
 
             var result = continents.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(value => value).ToList();
             _cache.Set(cacheKey, result, TimeSpan.FromHours(18));
@@ -284,7 +318,11 @@ public sealed class BirdDataService
                 }
                 return (summary, pageUrl);
             }
-            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogDebug("Wikipedia summary lookup timed out for {Url}", candidate);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or JsonException)
             {
                 _logger.LogDebug(exception, "Wikipedia summary lookup failed for {Url}", candidate);
             }
@@ -333,7 +371,12 @@ public sealed class BirdDataService
                     id.Length == 0 ? "https://xeno-canto.org" : $"https://xeno-canto.org/{id}");
             }).Where(recording => recording.FileUrl.Length > 0).ToList();
         }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or JsonException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("Xeno-canto lookup timed out for {ScientificName}", scientificName);
+            return Array.Empty<AudioRecording>();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
         {
             _logger.LogWarning(exception, "Xeno-canto lookup failed for {ScientificName}", scientificName);
             return Array.Empty<AudioRecording>();
@@ -349,11 +392,12 @@ public sealed class BirdDataService
         {
             var client = _httpClientFactory.CreateClient("inat");
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            long total = long.MaxValue;
+            var seenIds = new HashSet<long>();
+            long? expectedTotal = null;
             long processed = 0;
             var page = 1;
 
-            while (processed < total)
+            while (expectedTotal is null || processed < expectedTotal.Value)
             {
                 using var response = await client.GetAsync(
                     $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page={perPage}&page={page}&order_by=id&order=asc&locale=en",
@@ -362,10 +406,15 @@ public sealed class BirdDataService
 
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-                total = GetLong(document.RootElement, "total_results")
+                var total = GetLong(document.RootElement, "total_results")
                     ?? throw new JsonException($"iNaturalist response for rank {rank} omitted total_results.");
                 if (total < 0)
                     throw new JsonException($"iNaturalist response for rank {rank} contained a negative total_results value.");
+                if (expectedTotal is null)
+                    expectedTotal = total;
+                else if (total != expectedTotal.Value)
+                    throw new InvalidOperationException($"iNaturalist total_results changed while loading rank {rank}.");
+
                 if (!TryGetArray(document.RootElement, "results", out var results))
                     throw new JsonException($"iNaturalist response for rank {rank} omitted results.");
 
@@ -376,20 +425,32 @@ public sealed class BirdDataService
                         throw new JsonException($"iNaturalist taxonomy response for rank {rank} contained a non-object record.");
 
                     pageCount += 1;
+                    var id = GetLong(result, "id")
+                        ?? throw new JsonException($"iNaturalist taxonomy record for rank {rank} omitted id.");
+                    if (!seenIds.Add(id))
+                        throw new JsonException($"iNaturalist taxonomy pagination returned duplicate id {id} for rank {rank}.");
+
+                    var resultRank = GetString(result, "rank");
+                    if (!resultRank.Equals(rank, StringComparison.OrdinalIgnoreCase))
+                        throw new JsonException($"iNaturalist taxonomy record {id} had rank {resultRank} instead of {rank}.");
+
                     var name = GetString(result, "name");
                     if (name.Length == 0)
                         throw new JsonException($"iNaturalist taxonomy record for rank {rank} omitted name.");
                     names.Add(name);
                 }
 
-                if (pageCount == 0 && processed < total)
+                if (pageCount == 0 && processed < expectedTotal.Value)
                     throw new InvalidOperationException($"iNaturalist taxonomy pagination stopped early for rank {rank}.");
 
                 processed += pageCount;
-                if (processed > total)
+                if (processed > expectedTotal.Value)
                     throw new InvalidOperationException($"iNaturalist taxonomy pagination exceeded total_results for rank {rank}.");
                 page += 1;
             }
+
+            if (expectedTotal is null || processed != expectedTotal.Value)
+                throw new InvalidOperationException($"iNaturalist taxonomy pagination was incomplete for rank {rank}.");
 
             return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
         }
@@ -416,6 +477,11 @@ public sealed class BirdDataService
         if (scientificName.Length == 0)
             throw new JsonException($"iNaturalist taxon record {id} omitted scientific name.");
 
+        var observationCount = GetLong(element, "observations_count")
+            ?? throw new JsonException($"iNaturalist taxon record {id} omitted observations_count.");
+        if (observationCount < 0)
+            throw new JsonException($"iNaturalist taxon record {id} contained a negative observations_count.");
+
         var preferred = GetString(element, "preferred_common_name");
         var dutch = GetLocalizedName(element, "nl", "Dutch");
         var english = GetLocalizedName(element, "en", "English");
@@ -424,19 +490,32 @@ public sealed class BirdDataService
         string? imageUrl = null;
         string? attribution = null;
         string? license = null;
-        if (element.TryGetProperty("default_photo", out var photo) && photo.ValueKind == JsonValueKind.Object)
+        if (element.TryGetProperty("default_photo", out var photo))
         {
-            imageUrl = NullIfEmpty(GetString(photo, "medium_url"));
-            attribution = NullIfEmpty(GetString(photo, "attribution"));
-            license = NullIfEmpty(GetString(photo, "license_code"));
+            if (photo.ValueKind == JsonValueKind.Object)
+            {
+                imageUrl = NullIfEmpty(GetString(photo, "medium_url"));
+                attribution = NullIfEmpty(GetString(photo, "attribution"));
+                license = NullIfEmpty(GetString(photo, "license_code"));
+            }
+            else if (photo.ValueKind != JsonValueKind.Null)
+            {
+                throw new JsonException($"iNaturalist taxon record {id} contained an invalid default_photo.");
+            }
         }
 
         var status = "NE";
-        if (element.TryGetProperty("conservation_status", out var conservation)
-            && conservation.ValueKind == JsonValueKind.Object)
+        if (element.TryGetProperty("conservation_status", out var conservation))
         {
-            status = GetString(conservation, "status").ToUpperInvariant();
-            if (status.Length == 0) status = "NE";
+            if (conservation.ValueKind == JsonValueKind.Object)
+            {
+                status = GetString(conservation, "status").ToUpperInvariant();
+                if (status.Length == 0) status = "NE";
+            }
+            else if (conservation.ValueKind != JsonValueKind.Null)
+            {
+                throw new JsonException($"iNaturalist taxon record {id} contained an invalid conservation_status.");
+            }
         }
 
         return new InatTaxon(
@@ -448,7 +527,7 @@ public sealed class BirdDataService
             attribution,
             license,
             status,
-            GetLong(element, "observations_count") ?? 0,
+            observationCount,
             NullIfEmpty(GetString(element, "wikipedia_url")));
     }
 
@@ -478,7 +557,8 @@ public sealed class BirdDataService
 
     private static string GetLocalizedName(JsonElement element, string locale, string lexicon)
     {
-        if (!element.TryGetProperty("names", out var names)) return string.Empty;
+        if (!element.TryGetProperty("names", out var names) || names.ValueKind == JsonValueKind.Null)
+            return string.Empty;
         if (names.ValueKind != JsonValueKind.Array)
             throw new JsonException("iNaturalist taxon property names was not an array.");
 
@@ -489,11 +569,16 @@ public sealed class BirdDataService
 
             var nameLocale = GetString(name, "locale");
             var nameLexicon = GetString(name, "lexicon");
-            if (nameLocale.Equals(locale, StringComparison.OrdinalIgnoreCase)
-                || nameLexicon.Equals(lexicon, StringComparison.OrdinalIgnoreCase))
+            if (!nameLocale.Equals(locale, StringComparison.OrdinalIgnoreCase)
+                && !nameLexicon.Equals(lexicon, StringComparison.OrdinalIgnoreCase))
             {
-                return GetString(name, "name");
+                continue;
             }
+
+            var localizedName = GetString(name, "name");
+            if (localizedName.Length == 0)
+                throw new JsonException($"iNaturalist {locale} name record omitted name.");
+            return localizedName;
         }
         return string.Empty;
     }
