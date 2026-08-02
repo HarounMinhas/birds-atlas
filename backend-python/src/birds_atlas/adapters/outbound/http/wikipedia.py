@@ -14,9 +14,7 @@ class WikipediaHttpAdapter:
     def __init__(self, client: AsyncHttpClient) -> None:
         self._client = client
 
-    async def summary(
-        self, wikipedia_url: str | None, scientific_name: str
-    ) -> EncyclopediaEntry:
+    async def summary(self, wikipedia_url: str | None, scientific_name: str) -> EncyclopediaEntry:
         candidates: list[str] = []
         fallback: str | None = None
         if wikipedia_url and self._safe_wikipedia_url(wikipedia_url):
@@ -30,9 +28,7 @@ class WikipediaHttpAdapter:
             if not title:
                 continue
             try:
-                payload = await self._client.get_json(
-                    f"api/rest_v1/page/summary/{title}"
-                )
+                payload = await self._client.get_json(f"api/rest_v1/page/summary/{title}")
                 root = object_value(payload, self.provider, "summary response")
                 summary = string_value(root, "extract", self.provider)
                 if not summary:
