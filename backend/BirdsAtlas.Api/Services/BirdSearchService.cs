@@ -449,17 +449,33 @@ public sealed class BirdSearchService
             if (matchType.Length == 0)
                 throw new JsonException("GBIF species-match response omitted matchType.");
 
-            var usageKey = GetLong(document.RootElement, "usageKey");
-            if (!matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase) && usageKey is null)
-                throw new JsonException("GBIF species-match response omitted usageKey for a matched taxon.");
+            GbifTaxon result;
+            if (matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase))
+            {
+                result = EmptyGbifTaxon();
+            }
+            else
+            {
+                var rank = GetString(document.RootElement, "rank");
+                if (rank.Length == 0)
+                    throw new JsonException("GBIF species-match response omitted rank for a matched taxon.");
 
-            var result = matchType.Equals("NONE", StringComparison.OrdinalIgnoreCase)
-                ? EmptyGbifTaxon()
-                : new GbifTaxon(
-                    usageKey,
-                    GetString(document.RootElement, "family"),
-                    GetString(document.RootElement, "order"),
-                    GetString(document.RootElement, "genus"));
+                if (!IsSuitableGbifSpeciesMatch(matchType, rank))
+                {
+                    result = EmptyGbifTaxon();
+                }
+                else
+                {
+                    var usageKey = GetLong(document.RootElement, "usageKey")
+                        ?? throw new JsonException("GBIF species-match response omitted usageKey for a matched species.");
+                    result = new GbifTaxon(
+                        usageKey,
+                        GetString(document.RootElement, "family"),
+                        GetString(document.RootElement, "order"),
+                        GetString(document.RootElement, "genus"));
+                }
+            }
+
             _cache.Set(key, result, TimeSpan.FromDays(3));
             return result;
         }
@@ -582,6 +598,11 @@ public sealed class BirdSearchService
         if (taxon.EnglishName.Length > 0) return taxon.EnglishName;
         return taxon.ScientificName;
     }
+
+    private static bool IsSuitableGbifSpeciesMatch(string matchType, string rank) =>
+        rank.Equals("SPECIES", StringComparison.OrdinalIgnoreCase)
+        && (matchType.Equals("EXACT", StringComparison.OrdinalIgnoreCase)
+            || matchType.Equals("FUZZY", StringComparison.OrdinalIgnoreCase));
 
     private static GbifTaxon EmptyGbifTaxon() =>
         new(null, string.Empty, string.Empty, string.Empty);
