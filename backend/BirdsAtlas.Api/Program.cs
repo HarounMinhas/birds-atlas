@@ -59,10 +59,21 @@ app.MapGet("/api/birds", async (
     BirdSearchService service,
     CancellationToken cancellationToken) =>
 {
+    var requestedPage = Math.Clamp(page ?? 1, 1, 10_000);
+    var requestedPageSize = Math.Clamp(pageSize ?? 24, 1, 48);
+    if (!string.IsNullOrWhiteSpace(continent)
+        && !BirdSearchService.IsContinentPageAllowed(requestedPage, requestedPageSize))
+    {
+        return Results.BadRequest(new
+        {
+            message = $"Continent-filtered pagination is limited to an offset of {BirdSearchService.MaxContinentResultOffset} results."
+        });
+    }
+
     var result = await service.SearchAsync(
         q,
-        Math.Clamp(page ?? 1, 1, 10_000),
-        Math.Clamp(pageSize ?? 24, 1, 48),
+        requestedPage,
+        requestedPageSize,
         continent,
         order,
         family,
