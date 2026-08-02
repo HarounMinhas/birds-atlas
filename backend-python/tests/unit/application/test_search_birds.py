@@ -59,9 +59,7 @@ class NameOrderCatalog:
 
 
 class NameOrderGbif:
-    async def match_species(
-        self, scientific_name: str, *, required: bool
-    ) -> GbifTaxonomy:
+    async def match_species(self, scientific_name: str, *, required: bool) -> GbifTaxonomy:
         return GbifTaxonomy(int(scientific_name.split()[-1]))
 
     async def has_occurrence(self, gbif_key: int, continent: str) -> bool:
@@ -102,9 +100,7 @@ class ConcurrencyTrackingGbif:
         self.active_occurrences = 0
         self.max_active_occurrences = 0
 
-    async def match_species(
-        self, scientific_name: str, *, required: bool
-    ) -> GbifTaxonomy:
+    async def match_species(self, scientific_name: str, *, required: bool) -> GbifTaxonomy:
         self.active_matches += 1
         self.max_active_matches = max(self.max_active_matches, self.active_matches)
         await asyncio.sleep(0.01)
