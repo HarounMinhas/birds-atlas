@@ -5,11 +5,48 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
-  backend-python:
+  prepare-generated-files:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: pip install ruff==0.16.1
+      - run: ruff format backend-python
+      - run: npm install --prefix frontend
+      - run: npm install --prefix frontend
+      - id: commit
+        shell: bash
+        run: |
+          if [ -z "$(git status --porcelain -- backend-python frontend/package-lock.json)" ]; then
+            echo "No generated changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend-python frontend/package-lock.json
+          git commit -m "chore: format Python and lock frontend dependencies"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+
+  backend-python:
+    needs: prepare-generated-files
+    if: always() && (needs.prepare-generated-files.result == 'success' || needs.prepare-generated-files.result == 'skipped')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -18,29 +55,22 @@ jobs:
       - run: pip install -r backend-python/requirements-dev.txt
       - run: python -m compileall backend-python
       - run: pytest backend-python
-      - run: ruff format backend-python
       - run: ruff check backend-python
-      - run: git diff --binary -- backend-python > ruff-format.patch
+      - run: ruff format --check backend-python
       - run: mypy backend-python/src
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ruff-format-patch
-          path: ruff-format.patch
 
   frontend:
+    needs: prepare-generated-files
+    if: always() && (needs.prepare-generated-files.result == 'success' || needs.prepare-generated-files.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npm install --prefix frontend
-      - run: rm -rf frontend/node_modules
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - run: npm ci --prefix frontend
       - run: npm run build --prefix frontend
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: frontend-package-lock
-          path: frontend/package-lock.json
