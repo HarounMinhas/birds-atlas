@@ -1,0 +1,19 @@
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+
+# Backend
+backend/**/bin/
+backend/**/obj/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+*.user
+*.suo
+
+# Local settings
+.env
+appsettings.Development.local.json
