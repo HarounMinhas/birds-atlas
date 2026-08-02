@@ -116,7 +116,7 @@ export class AppComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.subscriptions.unsubscribe();
     if (this.searchTimer) clearTimeout(this.searchTimer);
-    this.map?.remove();
+    this.destroyMap();
   }
 
   get visibleBirds(): BirdSummary[] {
@@ -148,6 +148,10 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   setView(view: MainView): void {
+    if (this.activeView === 'map' && view !== 'map') {
+      this.destroyMap();
+    }
+
     this.activeView = view;
     this.mobileSearchOpen = false;
     if (view === 'map') {
@@ -364,6 +368,10 @@ export class AppComponent implements OnInit, OnDestroy {
     const container = document.getElementById('atlas-map');
     if (!container) return;
 
+    if (this.map && this.map.getContainer() !== container) {
+      this.destroyMap();
+    }
+
     if (!this.map) {
       this.map = L.map(container, { zoomControl: true, minZoom: 2 }).setView([20, 5], 2);
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -421,6 +429,14 @@ export class AppComponent implements OnInit, OnDestroy {
         }
       })
     );
+  }
+
+  private destroyMap(): void {
+    this.mapRequestToken += 1;
+    this.mapLoading = false;
+    this.mapLayer.clearLayers();
+    this.map?.remove();
+    this.map = undefined;
   }
 
   private loadOccurrenceLayers(
