@@ -21,17 +21,11 @@ async def test_wikipedia_rejects_unsafe_source_and_uses_fallback() -> None:
     http = StubHttp(
         {
             "extract": "A bird",
-            "content_urls": {
-                "desktop": {
-                    "page": "https://en.wikipedia.org/wiki/Turdus_merula"
-                }
-            },
+            "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Turdus_merula"}},
         }
     )
     adapter = WikipediaHttpAdapter(http)
-    result = await adapter.summary(
-        "https://attackerwikipedia.org/wiki/x", "Turdus merula"
-    )
+    result = await adapter.summary("https://attackerwikipedia.org/wiki/x", "Turdus merula")
     assert result.url == "https://en.wikipedia.org/wiki/Turdus_merula"
 
 
@@ -64,9 +58,7 @@ async def test_wikipedia_uses_configured_base_url() -> None:
         await client.aclose()
 
     assert result.summary == "A bird"
-    assert requested_urls == [
-        "https://proxy.example/wiki/api/rest_v1/page/summary/Turdus_merula"
-    ]
+    assert requested_urls == ["https://proxy.example/wiki/api/rest_v1/page/summary/Turdus_merula"]
 
 
 @pytest.mark.asyncio
