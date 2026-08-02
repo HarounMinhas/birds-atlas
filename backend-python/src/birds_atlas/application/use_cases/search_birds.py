@@ -84,6 +84,7 @@ class SearchBirds:
         for item in resolved:
             if (
                 item.id != most_specific.id
+                and most_specific.ancestor_ids
                 and item.id not in most_specific.ancestor_ids
             ):
                 return None
