@@ -59,7 +59,8 @@ export class AppComponent implements OnInit, OnDestroy {
     { code: 'EUROPE', label: 'Europa' },
     { code: 'NORTH_AMERICA', label: 'Noord-Amerika' },
     { code: 'SOUTH_AMERICA', label: 'Zuid-Amerika' },
-    { code: 'OCEANIA', label: 'Oceanie' }
+    { code: 'OCEANIA', label: 'Oceanie' },
+    { code: 'ANTARCTICA', label: 'Antarctica' }
   ];
 
   readonly iucnLabels: Record<string, string> = {
