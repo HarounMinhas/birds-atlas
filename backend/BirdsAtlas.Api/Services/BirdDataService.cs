@@ -101,6 +101,7 @@ public sealed class BirdDataService
             throw new JsonException("GBIF occurrence response omitted results.");
 
         var points = new List<OccurrencePoint>();
+        var seenKeys = new HashSet<long>();
         foreach (var result in results.EnumerateArray())
         {
             if (result.ValueKind != JsonValueKind.Object)
@@ -113,6 +114,9 @@ public sealed class BirdDataService
                 throw new JsonException("GBIF occurrence response contained invalid coordinates.");
 
             var key = GetLong(result, "key") ?? 0;
+            if (key > 0 && !seenKeys.Add(key))
+                throw new JsonException($"GBIF occurrence response contained duplicate key {key}.");
+
             points.Add(new OccurrencePoint(
                 key,
                 latitude.Value,
@@ -289,7 +293,8 @@ public sealed class BirdDataService
     {
         var candidates = new List<Uri>();
         if (Uri.TryCreate(wikipediaUrl, UriKind.Absolute, out var sourceUri)
-            && sourceUri.Host.EndsWith("wikipedia.org", StringComparison.OrdinalIgnoreCase))
+            && sourceUri.Host.EndsWith("wikipedia.org", StringComparison.OrdinalIgnoreCase)
+            && IsHttpUri(sourceUri))
         {
             candidates.Add(sourceUri);
         }
@@ -308,14 +313,36 @@ public sealed class BirdDataService
 
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-                var summary = GetString(document.RootElement, "extract");
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object)
+                    throw new JsonException("Wikipedia summary response was not an object.");
+
+                var summary = GetString(root, "extract");
                 if (summary.Length == 0) continue;
+
                 var pageUrl = candidate.AbsoluteUri;
-                if (document.RootElement.TryGetProperty("content_urls", out var contentUrls)
-                    && contentUrls.TryGetProperty("desktop", out var desktop))
+                if (root.TryGetProperty("content_urls", out var contentUrls)
+                    && contentUrls.ValueKind != JsonValueKind.Null)
                 {
-                    pageUrl = GetString(desktop, "page") is { Length: > 0 } url ? url : pageUrl;
+                    if (contentUrls.ValueKind != JsonValueKind.Object)
+                        throw new JsonException("Wikipedia content_urls was not an object.");
+
+                    if (contentUrls.TryGetProperty("desktop", out var desktop)
+                        && desktop.ValueKind != JsonValueKind.Null)
+                    {
+                        if (desktop.ValueKind != JsonValueKind.Object)
+                            throw new JsonException("Wikipedia content_urls.desktop was not an object.");
+
+                        var returnedUrl = GetString(desktop, "page");
+                        if (returnedUrl.Length > 0)
+                        {
+                            if (!Uri.TryCreate(returnedUrl, UriKind.Absolute, out var parsedUrl) || !IsHttpUri(parsedUrl))
+                                throw new JsonException("Wikipedia returned an invalid desktop page URL.");
+                            pageUrl = parsedUrl.AbsoluteUri;
+                        }
+                    }
                 }
+
                 return (summary, pageUrl);
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -350,15 +377,31 @@ public sealed class BirdDataService
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                throw new JsonException("Xeno-canto response was not an object.");
             if (!TryGetArray(document.RootElement, "recordings", out var recordings))
                 return Array.Empty<AudioRecording>();
 
-            return recordings.EnumerateArray().Take(3).Select(recording =>
+            var result = new List<AudioRecording>(3);
+            var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var recording in recordings.EnumerateArray())
             {
-                var file = GetString(recording, "file");
-                if (file.StartsWith("//", StringComparison.Ordinal)) file = "https:" + file;
+                if (recording.ValueKind != JsonValueKind.Object)
+                    throw new JsonException("Xeno-canto recordings contained a non-object element.");
+
                 var id = GetString(recording, "id");
-                return new AudioRecording(
+                if (id.Length == 0)
+                    throw new JsonException("Xeno-canto recording omitted id.");
+                if (!seenIds.Add(id))
+                    throw new JsonException($"Xeno-canto response contained duplicate recording id {id}.");
+
+                var file = GetString(recording, "file");
+                if (file.Length == 0) continue;
+                if (file.StartsWith("//", StringComparison.Ordinal)) file = "https:" + file;
+                if (!Uri.TryCreate(file, UriKind.Absolute, out var fileUri) || !IsHttpUri(fileUri))
+                    throw new JsonException($"Xeno-canto recording {id} contained an invalid file URL.");
+
+                result.Add(new AudioRecording(
                     id,
                     GetString(recording, "en"),
                     string.Join(' ', new[] { GetString(recording, "gen"), GetString(recording, "sp") }.Where(value => value.Length > 0)),
@@ -366,10 +409,14 @@ public sealed class BirdDataService
                     GetString(recording, "type"),
                     GetString(recording, "cnt"),
                     GetString(recording, "length"),
-                    file,
+                    fileUri.AbsoluteUri,
                     GetString(recording, "lic"),
-                    id.Length == 0 ? "https://xeno-canto.org" : $"https://xeno-canto.org/{id}");
-            }).Where(recording => recording.FileUrl.Length > 0).ToList();
+                    $"https://xeno-canto.org/{Uri.EscapeDataString(id)}"));
+
+                if (result.Count == 3) break;
+            }
+
+            return result;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -394,10 +441,9 @@ public sealed class BirdDataService
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var seenIds = new HashSet<long>();
             long? expectedTotal = null;
-            long processed = 0;
             var page = 1;
 
-            while (expectedTotal is null || processed < expectedTotal.Value)
+            while (expectedTotal is null || seenIds.Count < expectedTotal.Value)
             {
                 using var response = await client.GetAsync(
                     $"v1/taxa?taxon_id={AvesTaxonId}&rank={rank}&is_active=true&per_page={perPage}&page={page}&order_by=id&order=asc&locale=en",
@@ -440,16 +486,15 @@ public sealed class BirdDataService
                     names.Add(name);
                 }
 
-                if (pageCount == 0 && processed < expectedTotal.Value)
+                if (pageCount == 0 && seenIds.Count < expectedTotal.Value)
                     throw new InvalidOperationException($"iNaturalist taxonomy pagination stopped early for rank {rank}.");
 
-                processed += pageCount;
-                if (processed > expectedTotal.Value)
+                if (seenIds.Count > expectedTotal.Value)
                     throw new InvalidOperationException($"iNaturalist taxonomy pagination exceeded total_results for rank {rank}.");
                 page += 1;
             }
 
-            if (expectedTotal is null || processed != expectedTotal.Value)
+            if (expectedTotal is null || seenIds.Count != expectedTotal.Value)
                 throw new InvalidOperationException($"iNaturalist taxonomy pagination was incomplete for rank {rank}.");
 
             return names.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
@@ -590,43 +635,70 @@ public sealed class BirdDataService
 
     private static bool TryGetArray(JsonElement element, string propertyName, out JsonElement array)
     {
-        if (element.TryGetProperty(propertyName, out array) && array.ValueKind == JsonValueKind.Array)
-            return true;
         array = default;
-        return false;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("JSON parent value was not an object.");
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+            return false;
+        if (value.ValueKind != JsonValueKind.Array)
+            throw new JsonException($"JSON property {propertyName} was not an array.");
+        array = value;
+        return true;
     }
 
     private static string GetString(JsonElement element, string propertyName)
     {
-        if (!element.TryGetProperty(propertyName, out var value)) return string.Empty;
-        return value.ValueKind == JsonValueKind.String ? value.GetString() ?? string.Empty : string.Empty;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("JSON parent value was not an object.");
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+            return string.Empty;
+        if (value.ValueKind != JsonValueKind.String)
+            throw new JsonException($"JSON property {propertyName} was not a string.");
+        return value.GetString() ?? string.Empty;
     }
 
     private static long? GetLong(JsonElement element, string propertyName)
     {
-        if (!element.TryGetProperty(propertyName, out var value)) return null;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("JSON parent value was not an object.");
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number)) return number;
         if (value.ValueKind == JsonValueKind.String
-            && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number)) return number;
-        return null;
+            && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+        {
+            return number;
+        }
+        throw new JsonException($"JSON property {propertyName} was not a valid integer.");
     }
 
     private static double? GetDouble(JsonElement element, string propertyName)
     {
-        if (!element.TryGetProperty(propertyName, out var value)) return null;
+        if (element.ValueKind != JsonValueKind.Object)
+            throw new JsonException("JSON parent value was not an object.");
+        if (!element.TryGetProperty(propertyName, out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number)) return number;
         if (value.ValueKind == JsonValueKind.String
-            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number)) return number;
-        return null;
+            && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number))
+        {
+            return number;
+        }
+        throw new JsonException($"JSON property {propertyName} was not a valid number.");
     }
 
     private static DateTimeOffset? GetDate(JsonElement element, string propertyName)
     {
         var value = GetString(element, propertyName);
-        return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date)
-            ? date
-            : null;
+        if (value.Length == 0) return null;
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
+            throw new JsonException($"JSON property {propertyName} was not a valid date.");
+        return date;
     }
+
+    private static bool IsHttpUri(Uri uri) =>
+        uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+        || uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
 
     private static string? NullIfEmpty(string value) => value.Length == 0 ? null : value;
 }
