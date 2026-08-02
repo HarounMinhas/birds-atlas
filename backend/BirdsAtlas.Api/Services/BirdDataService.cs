@@ -723,7 +723,7 @@ public sealed class BirdDataService
         }
 
         var text = value.GetString()?.Trim();
-        if (string.IsNullOrEmpty(text) || text.Contains('/', StringComparison.Ordinal))
+        if (string.IsNullOrEmpty(text) || text.Contains('/'))
             return null;
 
         if (DateOnly.TryParseExact(
